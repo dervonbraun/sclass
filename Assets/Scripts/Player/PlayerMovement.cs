@@ -15,6 +15,7 @@ public class PlayerMovement : MonoBehaviour
     private Vector2 currentInput;
     private Vector3 currentVelocity;
     private float verticalVelocity;
+    private float currentSprintOffset;
     
     private void Start()
     {
@@ -41,13 +42,20 @@ public class PlayerMovement : MonoBehaviour
 
         Vector3 moveDirection = transform.right * currentInput.x + transform.forward * currentInput.y;
         
-        if (moveDirection.magnitude > 1f)
+        if (moveDirection.sqrMagnitude > 1f)
         {
             moveDirection.Normalize();
         }
 
-        bool isSprinting = sprintAction != null && sprintAction.action.IsPressed();
-        float targetSpeed = isSprinting ? settings.sprintSpeed : settings.walkSpeed;
+        if (sprintAction != null && sprintAction.action.WasPressedThisFrame())
+        {
+            currentSprintOffset += settings.sprintSpamAdd;
+        }
+
+        currentSprintOffset -= settings.sprintSpamDecay * Time.deltaTime;
+        currentSprintOffset = Mathf.Clamp(currentSprintOffset, 0f, settings.sprintSpeed - settings.walkSpeed);
+
+        float targetSpeed = settings.walkSpeed + currentSprintOffset;
 
         currentVelocity = moveDirection * targetSpeed;
 

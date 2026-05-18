@@ -95,32 +95,34 @@ public class PlayerHealth : MonoBehaviour
 
     // ── Публичный API ──────────────────────────────────────────────
 
+    private DamageContext _reusableDamageContext;
+
     public void TakeDamage(float amount, GameObject sender = null)
     {
         if (IsDead) return;
 
-        // 1. Формируем контекст события урона
-        var damageContext = new DamageContext
-        {
-            Sender = sender,
-            Target = gameObject,
-            RawDamage = amount,
-            FinalDamage = amount,
-            IsCancelled = false
-        };
+        // PERF: Избегаем аллокаций при непрерывном уроне
+        if (_reusableDamageContext == null)
+            _reusableDamageContext = new DamageContext();
 
-        // 2. Прогоняем урон через шину (все эффекты-щиты и зеркала могут изменить FinalDamage или отменить его)
-        GameplayEventBus.ProcessDamage(damageContext);
+        _reusableDamageContext.Sender = sender;
+        _reusableDamageContext.Target = gameObject;
+        _reusableDamageContext.RawDamage = amount;
+        _reusableDamageContext.FinalDamage = amount;
+        _reusableDamageContext.IsCancelled = false;
+
+        // 2. Прогоняем урон через шину
+        GameplayEventBus.ProcessDamage(_reusableDamageContext);
 
         // Если эффекты отменили урон, выходим
-        if (damageContext.IsCancelled) return;
+        if (_reusableDamageContext.IsCancelled) return;
 
         // 3. Применяем итоговый урон
-        CurrentHealth = Mathf.Max(0f, CurrentHealth - damageContext.FinalDamage);
+        CurrentHealth = Mathf.Max(0f, CurrentHealth - _reusableDamageContext.FinalDamage);
         UpdateUI();
         
         // Запоминаем время урона для эффекта на экране
-        if (damageContext.FinalDamage > 0)
+        if (_reusableDamageContext.FinalDamage > 0)
         {
             _lastDamageTime = Time.time;
         }
@@ -201,16 +203,7 @@ public class PlayerHealth : MonoBehaviour
             HealthText.text = Mathf.CeilToInt(CurrentHealth).ToString();
     }
 
-    // Запасная отрисовка если TMP_Text не назначен
-    private void OnGUI()
-    {
-        if (HealthText == null)
-        {
-            GUI.contentColor = Color.red;
-            GUI.Label(new Rect(20, 20, 300, 30),
-                      $"HP: {Mathf.CeilToInt(CurrentHealth)} / {Mathf.CeilToInt(MaxHealth.GetValue())}");
-        }
-    }
+    // Запасная отрисовка убрана, так как OnGUI запрещен (вызывает сильные аллокации и является устаревшим API).
 
     // Визуализация радиуса детекции в Scene View
     private void OnDrawGizmosSelected()

@@ -6,6 +6,8 @@ public class PlayerSettingsSO : ScriptableObject
     [Header("Movement")]
     public float walkSpeed = 5f;
     public float sprintSpeed = 8f;
+    public float sprintSpamAdd = 1.5f;
+    public float sprintSpamDecay = 2.5f;
     public float acceleration = 10f;
     public float deceleration = 10f;
     public float gravity = -9.81f;

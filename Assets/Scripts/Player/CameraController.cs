@@ -9,7 +9,6 @@ public class CameraController : MonoBehaviour
 
     [Header("Input Actions")]
     public InputActionReference lookAction;
-    public InputActionReference sprintAction;
 
     // --- Rotation ---
     private float xRotation = 0f;
@@ -48,6 +47,15 @@ public class CameraController : MonoBehaviour
         }
 
         if (lookAction == null) Debug.LogWarning("CameraController: Не назначен lookAction!");
+        
+        if (playerMovement == null)
+        {
+            playerMovement = GetComponentInParent<PlayerMovement>();
+            if (playerMovement == null)
+            {
+                Debug.LogWarning("CameraController: Не назначен и не найден PlayerMovement!");
+            }
+        }
     }
 
     private void Update()
@@ -93,7 +101,6 @@ public class CameraController : MonoBehaviour
 
         float speed = playerMovement.GetCurrentVelocity().magnitude;
         bool isGrounded = playerMovement.IsGrounded();
-        bool isSprinting = sprintAction != null && sprintAction.action.IsPressed();
 
         // --- Определяем целевые параметры ---
         float targetFrequency;
@@ -111,20 +118,22 @@ public class CameraController : MonoBehaviour
         }
         else if (speed > 0.1f)
         {
-            if (isSprinting)
+            // Вычисляем коэффициент бега на основе текущей скорости
+            float walkSpeed = settings.walkSpeed;
+            float sprintSpeed = settings.sprintSpeed;
+            float sprintFactor = 0f;
+
+            if (sprintSpeed > walkSpeed)
             {
-                targetFrequency = settings.sprintBobFrequency;
-                targetAmplY = settings.sprintBobAmplitudeY;
-                targetAmplX = settings.sprintBobAmplitudeX;
-                targetTilt = settings.sprintBobTilt;
+                // 0 = ходьба, 1 = максимальный бег
+                sprintFactor = Mathf.Clamp01((speed - walkSpeed) / (sprintSpeed - walkSpeed));
             }
-            else
-            {
-                targetFrequency = settings.walkBobFrequency;
-                targetAmplY = settings.walkBobAmplitudeY;
-                targetAmplX = settings.walkBobAmplitudeX;
-                targetTilt = settings.walkBobTilt;
-            }
+
+            // Плавно смешиваем параметры ходьбы и бега в зависимости от реальной скорости
+            targetFrequency = Mathf.Lerp(settings.walkBobFrequency, settings.sprintBobFrequency, sprintFactor);
+            targetAmplY = Mathf.Lerp(settings.walkBobAmplitudeY, settings.sprintBobAmplitudeY, sprintFactor);
+            targetAmplX = Mathf.Lerp(settings.walkBobAmplitudeX, settings.sprintBobAmplitudeX, sprintFactor);
+            targetTilt = Mathf.Lerp(settings.walkBobTilt, settings.sprintBobTilt, sprintFactor);
         }
         else
         {
@@ -175,12 +184,10 @@ public class CameraController : MonoBehaviour
     private void OnEnable()
     {
         if (lookAction != null) lookAction.action.Enable();
-        if (sprintAction != null) sprintAction.action.Enable();
     }
 
     private void OnDisable()
     {
         if (lookAction != null) lookAction.action.Disable();
-        if (sprintAction != null) sprintAction.action.Disable();
     }
 }
