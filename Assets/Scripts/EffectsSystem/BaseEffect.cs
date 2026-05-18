@@ -7,9 +7,11 @@ namespace Sclass.EffectsSystem
         public bool IsActive { get; private set; }
         public GameObject Target { get; private set; }
 
-        // --- UI Properties ---
-        public Color EffectColor { get; protected set; } = Color.white;
-        public float HudWeight { get; set; } = 1f;
+        // --- Data & UI ---
+        public EffectSettingsSO Settings { get; set; }
+        
+        public Color EffectColor => Settings != null ? Settings.EffectColor : Color.white;
+        public float HudWeight => Settings != null ? Settings.HudWeight : 1f;
 
         public void Apply(GameObject target)
         {

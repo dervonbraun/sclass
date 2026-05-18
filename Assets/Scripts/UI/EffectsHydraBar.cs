@@ -14,10 +14,14 @@ namespace Sclass.UI
         
         [Tooltip("Скорость 'втекания' и вытеснения эффектов")]
         public float LerpSpeed = 5f;
+        
+        [Tooltip("Задержка (КД) перед втеканием следующего эффекта при спаме (сек)")]
+        public float EffectFlowCooldown = 0.3f;
 
         [Header("Shader Properties")]
         private Material _hydraMaterial;
         private Image _image;
+        private CanvasGroup _canvasGroup;
 
         // Внутренние данные для интерполяции
         private class EffectBarData
@@ -26,10 +30,14 @@ namespace Sclass.UI
             public float CurrentWeight;
             public float TargetWeight;
             public Color CurrentColor;
-            public float BasePulseMultiplier = 1f; // Для эффекта "Агонии"
+            public float BasePulseMultiplier = 1f;
         }
 
         private List<EffectBarData> _barData = new List<EffectBarData>();
+        
+        // Очередь для защиты от спама
+        private Queue<BaseEffect> _pendingEffects = new Queue<BaseEffect>();
+        private float _lastEffectTime = -999f;
         
         // Массивы для передачи в шейдер (до 16 эффектов)
         private Vector4[] _shaderColors = new Vector4[16];
@@ -38,6 +46,11 @@ namespace Sclass.UI
         private void Awake()
         {
             _image = GetComponent<Image>();
+            
+            // Получаем или добавляем CanvasGroup для плавного появления самой полоски
+            _canvasGroup = GetComponent<CanvasGroup>();
+            if (_canvasGroup == null) _canvasGroup = gameObject.AddComponent<CanvasGroup>();
+            _canvasGroup.alpha = 0f;
             
             // Клонируем материал, чтобы не менять ассет
             if (_image.material != null)
@@ -51,13 +64,12 @@ namespace Sclass.UI
         {
             if (TargetManager != null)
             {
-                TargetManager.OnEffectAdded += HandleEffectAdded;
+                TargetManager.OnEffectAdded += QueueEffectAdded;
                 TargetManager.OnEffectRemoved += HandleEffectRemoved;
                 
-                // Загружаем уже активные эффекты
                 foreach (var effect in TargetManager.ActiveEffects)
                 {
-                    HandleEffectAdded(effect);
+                    QueueEffectAdded(effect);
                 }
             }
         }
@@ -66,28 +78,45 @@ namespace Sclass.UI
         {
             if (TargetManager != null)
             {
-                TargetManager.OnEffectAdded -= HandleEffectAdded;
+                TargetManager.OnEffectAdded -= QueueEffectAdded;
                 TargetManager.OnEffectRemoved -= HandleEffectRemoved;
+            }
+        }
+
+        private void QueueEffectAdded(BaseEffect effect)
+        {
+            if (!_pendingEffects.Contains(effect))
+            {
+                _pendingEffects.Enqueue(effect);
             }
         }
 
         private void HandleEffectAdded(BaseEffect effect)
         {
+            // Если массив близок к переполнению, агрессивно удаляем "мертвые" вытекающие эффекты
+            while (_barData.Count >= 16)
+            {
+                int deadIndex = _barData.FindIndex(d => d.Effect == null);
+                if (deadIndex != -1) 
+                    _barData.RemoveAt(deadIndex);
+                else 
+                    break;
+            }
+
             _barData.Add(new EffectBarData 
             { 
                 Effect = effect, 
-                CurrentWeight = 0f, // Начинаем с нуля (эффект втекания)
+                CurrentWeight = 0f, 
                 CurrentColor = effect.EffectColor 
             });
         }
 
         private void HandleEffectRemoved(BaseEffect effect)
         {
-            // Не удаляем сразу, а обнуляем TargetWeight, чтобы цвет плавно "вытек"
             var data = _barData.Find(d => d.Effect == effect);
             if (data != null)
             {
-                data.Effect = null; // Помечаем как "мертвый"
+                data.Effect = null;
                 data.TargetWeight = 0f;
             }
         }
@@ -96,8 +125,33 @@ namespace Sclass.UI
         {
             if (_hydraMaterial == null) return;
 
+            ProcessPendingQueue();
             UpdateWeights();
             UpdateShaderArrays();
+            UpdateBarVisibility();
+        }
+
+        private void ProcessPendingQueue()
+        {
+            if (_pendingEffects.Count > 0 && Time.time - _lastEffectTime > EffectFlowCooldown)
+            {
+                BaseEffect nextEffect = _pendingEffects.Dequeue();
+                
+                // Если эффект уже успели удалить, пока он был в очереди — пропускаем
+                if (nextEffect != null && nextEffect.IsActive)
+                {
+                    HandleEffectAdded(nextEffect);
+                    _lastEffectTime = Time.time;
+                }
+            }
+        }
+
+        private void UpdateBarVisibility()
+        {
+            // Плавно показываем полоску, если есть живые эффекты, и прячем, если пусто
+            bool hasActiveEffects = _barData.Exists(d => d.Effect != null);
+            float targetAlpha = hasActiveEffects ? 1f : 0f;
+            _canvasGroup.alpha = Mathf.Lerp(_canvasGroup.alpha, targetAlpha, Time.deltaTime * LerpSpeed);
         }
 
         private void UpdateWeights()
@@ -130,7 +184,7 @@ namespace Sclass.UI
                 data.CurrentWeight = Mathf.Lerp(data.CurrentWeight, normalizedTarget, Time.deltaTime * LerpSpeed);
 
                 // Если вес стал почти нулем и эффект удален — полностью удаляем его из списка
-                if (data.Effect == null && data.CurrentWeight < 0.001f)
+                if (data.Effect == null && data.CurrentWeight < 0.01f)
                 {
                     _barData.RemoveAt(i);
                 }

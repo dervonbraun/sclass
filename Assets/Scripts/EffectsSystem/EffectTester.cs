@@ -4,6 +4,10 @@ using Sclass.EffectsSystem.Demo;
 
 public class EffectTester : MonoBehaviour
 {
+    [Header("Effect Settings (ScriptableObjects)")]
+    public EffectSettingsSO HypertrophySO;
+    public EffectSettingsSO KineticMirrorSO;
+
     private EffectManager _manager;
     private HypertrophyEffect _hyper;
     private KineticMirrorEffect _mirror;
@@ -26,7 +30,7 @@ public class EffectTester : MonoBehaviour
             }
             else
             {
-                _hyper = new HypertrophyEffect();
+                _hyper = new HypertrophyEffect { Settings = HypertrophySO };
                 _manager.AddEffect(_hyper);
                 Debug.Log("Гипертрофия наложена! (Размер и HP увеличены)");
             }
@@ -43,7 +47,7 @@ public class EffectTester : MonoBehaviour
             }
             else
             {
-                _mirror = new KineticMirrorEffect();
+                _mirror = new KineticMirrorEffect { Settings = KineticMirrorSO };
                 _manager.AddEffect(_mirror);
                 Debug.Log("Зеркало наложено! (35% шанс отменить и отразить урон)");
             }
