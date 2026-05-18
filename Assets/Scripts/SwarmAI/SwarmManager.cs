@@ -149,7 +149,7 @@ public class SwarmManager : MonoBehaviour
             _transformAccessArray.Add(inst.transform);
 
             // Регистрируем AgentHealth: передаём индекс и ссылку на себя
-            AgentHealth health = inst.GetComponent<AgentHealth>();
+            AgentHealth health = inst.GetComponentInChildren<AgentHealth>();
             if (health != null) health.Init(i, this);
             else Debug.LogWarning($"[SwarmManager] AgentPrefab не имеет AgentHealth! Агент {i} не получит урон.");
         }

@@ -1,5 +1,6 @@
 using UnityEngine;
 using TMPro;
+using Sclass.EffectsSystem;
 
 /// <summary>
 /// Здоровье игрока + HUD (HP).
@@ -12,7 +13,10 @@ using TMPro;
 public class PlayerHealth : MonoBehaviour
 {
     [Header("HP")]
-    public float MaxHealth = 100f;
+    public ModifiableStat MaxHealth = new ModifiableStat(100f);
+    public ModifiableStat HitboxRadiusMultiplier = new ModifiableStat(1f);
+    [Tooltip("Начальное базовое значение здоровья")]
+    public float InitialBaseHealth = 100f;
 
     [Tooltip("Слой агентов роя.")]
     public LayerMask AgentLayer;
@@ -47,6 +51,9 @@ public class PlayerHealth : MonoBehaviour
     [Tooltip("SwarmManager — для детекции агентов рядом.")]
     public SwarmManager Swarm;
 
+    [Header("Death Screen")]
+    public DeathScreenManager DeathScreen;
+
     // ── Состояние ──────────────────────────────────────────────────
     public float CurrentHealth { get; private set; }
     public bool  IsDead        { get; private set; }
@@ -58,7 +65,8 @@ public class PlayerHealth : MonoBehaviour
     private void Awake()
     {
         _cc = GetComponent<CharacterController>();
-        CurrentHealth = MaxHealth;
+        MaxHealth.BaseValue = InitialBaseHealth;
+        CurrentHealth = MaxHealth.GetValue();
         UpdateUI();
         
         // Сбрасываем все эффекты при старте
@@ -72,10 +80,14 @@ public class PlayerHealth : MonoBehaviour
     {
         if (IsDead) return;
 
-        // ── Детекция агентов через SwarmManager (не зависит от коллайдеров/слоёв) ──
-        if (Swarm != null && Swarm.IsAgentNearPlayer(transform.position, Swarm.AgentAttackRadius))
+        // ── Детекция агентов через SwarmManager ──
+        if (Swarm != null)
         {
-            TakeDamage(Swarm.AgentDamagePerSecond * Time.deltaTime);
+            float actualRadius = Swarm.AgentAttackRadius * HitboxRadiusMultiplier.GetValue();
+            if (Swarm.IsAgentNearPlayer(transform.position, actualRadius))
+            {
+                TakeDamage(Swarm.AgentDamagePerSecond * Time.deltaTime, Swarm.gameObject);
+            }
         }
 
         UpdateScreenEffects();
@@ -83,15 +95,32 @@ public class PlayerHealth : MonoBehaviour
 
     // ── Публичный API ──────────────────────────────────────────────
 
-    public void TakeDamage(float amount)
+    public void TakeDamage(float amount, GameObject sender = null)
     {
         if (IsDead) return;
-        
-        CurrentHealth = Mathf.Max(0f, CurrentHealth - amount);
+
+        // 1. Формируем контекст события урона
+        var damageContext = new DamageContext
+        {
+            Sender = sender,
+            Target = gameObject,
+            RawDamage = amount,
+            FinalDamage = amount,
+            IsCancelled = false
+        };
+
+        // 2. Прогоняем урон через шину (все эффекты-щиты и зеркала могут изменить FinalDamage или отменить его)
+        GameplayEventBus.ProcessDamage(damageContext);
+
+        // Если эффекты отменили урон, выходим
+        if (damageContext.IsCancelled) return;
+
+        // 3. Применяем итоговый урон
+        CurrentHealth = Mathf.Max(0f, CurrentHealth - damageContext.FinalDamage);
         UpdateUI();
         
         // Запоминаем время урона для эффекта на экране
-        if (amount > 0)
+        if (damageContext.FinalDamage > 0)
         {
             _lastDamageTime = Time.time;
         }
@@ -103,7 +132,7 @@ public class PlayerHealth : MonoBehaviour
     {
         if (IsDead) return;
         
-        CurrentHealth = Mathf.Min(MaxHealth, CurrentHealth + amount);
+        CurrentHealth = Mathf.Min(MaxHealth.GetValue(), CurrentHealth + amount);
         UpdateUI();
 
         // Запоминаем время лечения для эффекта на экране
@@ -136,7 +165,7 @@ public class PlayerHealth : MonoBehaviour
         }
 
         // 3. Эффекты состояний здоровья (Низкое / Среднее)
-        float healthPercent = CurrentHealth / MaxHealth;
+        float healthPercent = CurrentHealth / MaxHealth.GetValue();
         bool isLow = healthPercent <= LowHealthThreshold;
         // Среднее здоровье активно, только если здоровье ниже среднего порога, но ВЫШЕ низкого
         bool isMedium = !isLow && healthPercent <= MediumHealthThreshold;
@@ -160,7 +189,10 @@ public class PlayerHealth : MonoBehaviour
     {
         IsDead = true;
         Debug.Log("[PlayerHealth] Игрок погиб.");
-        // GameManager.Instance?.OnPlayerDied();
+        if (DeathScreen != null)
+        {
+            DeathScreen.TriggerDeath();
+        }
     }
 
     private void UpdateUI()
@@ -176,7 +208,7 @@ public class PlayerHealth : MonoBehaviour
         {
             GUI.contentColor = Color.red;
             GUI.Label(new Rect(20, 20, 300, 30),
-                      $"HP: {Mathf.CeilToInt(CurrentHealth)} / {Mathf.CeilToInt(MaxHealth)}");
+                      $"HP: {Mathf.CeilToInt(CurrentHealth)} / {Mathf.CeilToInt(MaxHealth.GetValue())}");
         }
     }
 

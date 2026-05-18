@@ -60,9 +60,9 @@ public class WeaponHolder : MonoBehaviour
         BindAction(fireAction,   started: OnFireStarted,   canceled: OnFireCanceled);
         BindAction(reloadAction, started: OnReloadStarted);
         BindAction(aimAction,    started: OnAimStarted,    canceled: OnAimCanceled);
-        BindAction(slot1Action,  started: _ => SwitchToSlot(0));
-        BindAction(slot2Action,  started: _ => SwitchToSlot(1));
-        BindAction(cycleAction,  started: _ => CycleWeapon());
+        BindAction(slot1Action,  started: OnSlot1Started);
+        BindAction(slot2Action,  started: OnSlot2Started);
+        BindAction(cycleAction,  started: OnCycleWeaponStarted);
     }
 
     private void OnDisable()
@@ -70,9 +70,9 @@ public class WeaponHolder : MonoBehaviour
         UnbindAction(fireAction,   started: OnFireStarted,   canceled: OnFireCanceled);
         UnbindAction(reloadAction, started: OnReloadStarted);
         UnbindAction(aimAction,    started: OnAimStarted,    canceled: OnAimCanceled);
-        UnbindAction(slot1Action,  started: _ => SwitchToSlot(0));
-        UnbindAction(slot2Action,  started: _ => SwitchToSlot(1));
-        UnbindAction(cycleAction,  started: _ => CycleWeapon());
+        UnbindAction(slot1Action,  started: OnSlot1Started);
+        UnbindAction(slot2Action,  started: OnSlot2Started);
+        UnbindAction(cycleAction,  started: OnCycleWeaponStarted);
     }
 
     // ── Переключение слотов ────────────────────────────────────
@@ -155,6 +155,9 @@ public class WeaponHolder : MonoBehaviour
     private void OnReloadStarted(InputAction.CallbackContext ctx) => _activeWeapon?.RequestReload();
     private void OnAimStarted(InputAction.CallbackContext ctx)    => _activeWeapon?.SetAiming(true);
     private void OnAimCanceled(InputAction.CallbackContext ctx)   => _activeWeapon?.SetAiming(false);
+    private void OnSlot1Started(InputAction.CallbackContext ctx)  => SwitchToSlot(0);
+    private void OnSlot2Started(InputAction.CallbackContext ctx)  => SwitchToSlot(1);
+    private void OnCycleWeaponStarted(InputAction.CallbackContext ctx) => CycleWeapon();
 
     // ── Утилиты бинда ──────────────────────────────────────────
 
