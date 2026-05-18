@@ -24,7 +24,7 @@ MonoBehaviour:
   pelletsPerShot: 6
   baseSpread: 5
   movementSpread: 15
-  recoilCamRotation: {x: 14, y: 8, z: 6}
+  recoilCamRotation: {x: 14, y: 14, z: 14}
   recoilRotationSpeed: 6
   recoilReturnSpeed: 3
   recoilCamRotationADS: {x: 5, y: 5, z: 4}

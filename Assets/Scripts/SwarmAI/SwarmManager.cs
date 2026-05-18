@@ -55,7 +55,13 @@ public class SwarmManager : MonoBehaviour
     [Tooltip("Радиус для поиска соседей для Spatial Hashing (используется для Alignment, Cohesion).")]
     public float NeighborRadius = 4.0f;
     [Tooltip("Дистанция до стены, на которой начинается отталкивание.")]
-    public float ObstacleAvoidRadius = 2.5f;
+    public float ObstacleAvoidRadius = 4.0f;
+
+    [Header("Урон и атака")]
+    [Tooltip("Урон в секунду, который рой наносит игроку.")]
+    public float AgentDamagePerSecond = 15f;
+    [Tooltip("Радиус атаки роя. Если игрок внутри, он получает урон.")]
+    public float AgentAttackRadius = 1.2f;
 
     [Header("Движение & FSM")]
     [Tooltip("Максимальная скорость в состоянии Swarming.")]
@@ -64,8 +70,11 @@ public class SwarmManager : MonoBehaviour
     public float ChargeSpeedMult = 2.0f;
     [Tooltip("Дистанция до игрока для перехода в агрессивный рывок (Charging).")]
     public float ChargeRadius = 10.0f;
-    [Tooltip("Физический радиус сферы агента. Определяет на каком расстоянии от стены агент останавливается.")]
+    [Tooltip("Физический радиус сферы агента. Используется для столкновений между агентами.")]
     public float AgentRadius = 0.5f;
+
+    [Tooltip("Насколько далеко агенты должны держаться от стен (коллизия со стенами).")]
+    public float WallDistance = 0.5f;
 
     [Tooltip("Радиус CharacterController игрока. Агенты не заходят внутрь этого радиуса.")]
     public float PlayerRadius = 0.5f;
@@ -102,11 +111,17 @@ public class SwarmManager : MonoBehaviour
 
                 if (Physics.Raycast(rayStart, Vector3.down, out RaycastHit hit, 100f, GroundMask))
                 {
-                    spawnPos = hit.point;
+                    Vector3 testPos = hit.point;
                     // Игнорируем высоту неровностей/других объектов и жестко фиксируем по высоте Менеджера
-                    spawnPos.y = transform.position.y; 
-                    pointFound = true;
-                    break;
+                    testPos.y = transform.position.y; 
+                    
+                    // Проверяем, не застрянет ли агент в стене при спавне
+                    if (!Physics.CheckSphere(testPos, WallDistance, FlowField.UnwalkableMask))
+                    {
+                        spawnPos = testPos;
+                        pointFound = true;
+                        break;
+                    }
                 }
             }
 
@@ -259,7 +274,8 @@ public class SwarmManager : MonoBehaviour
             
             HashCellSize = NeighborRadius,
             TargetDensity = TargetDensity,
-            AgentRadius = AgentRadius
+            AgentRadius = AgentRadius,
+            WallDistance = WallDistance
         };
 
         // Запуск цепочки Джоб и ожидание их выполнения.

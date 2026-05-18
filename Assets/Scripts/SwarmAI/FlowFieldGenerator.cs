@@ -79,7 +79,7 @@ public class FlowFieldGenerator : MonoBehaviour
                 // Маленький бокс — помечаем как стену ТОЛЬКО ячейки, центр которых реально внутри стены.
                 // Физическая коллизия теперь через SDF, а не через AABB ячеек.
                 Vector3 boxCenter = (Vector3)worldPoint + new Vector3(0, 1.5f, 0);
-                Vector3 halfExtents = new Vector3(CellRadius * 0.3f, 2.0f, CellRadius * 0.3f);
+                Vector3 halfExtents = new Vector3(CellRadius * 0.5f, 2.0f, CellRadius * 0.5f);
                 
                 bool isObstacle = Physics.CheckBox(boxCenter, halfExtents, Quaternion.identity, UnwalkableMask);
                 

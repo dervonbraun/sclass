@@ -24,10 +24,10 @@ MonoBehaviour:
   pelletsPerShot: 1
   baseSpread: 0.5
   movementSpread: 1.5
-  recoilCamRotation: {x: 2, y: 0.4, z: 0.1}
+  recoilCamRotation: {x: 1, y: 2, z: 2}
   recoilRotationSpeed: 6
   recoilReturnSpeed: 3
-  recoilCamRotationADS: {x: 1, y: 0.15, z: 0.05}
+  recoilCamRotationADS: {x: 4, y: 4, z: 4}
   magazineSize: 30
   reloadTime: 2
   projectilePrefab: {fileID: 5122276961954645624, guid: 5f615b6c3297ba94f878bc09d5fe1410, type: 3}
