@@ -1,0 +1,29 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4dbd1329ab188124c90618f038f02984, type: 3}
+  m_Name: PlayerSettings
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerSettingsSO
+  walkSpeed: 5
+  sprintSpeed: 8
+  acceleration: 10
+  deceleration: 10
+  gravity: -9.81
+  jumpHeight: 2
+  mouseSensitivity: 2
+  cameraSmoothTime: 0.05
+  idleBobFrequency: 1
+  idleBobAmplitude: 0.05
+  walkBobFrequency: 5
+  walkBobAmplitude: 0.1
+  sprintBobFrequency: 8
+  sprintBobAmplitude: 0.15
+  headbobSmoothTime: 0.1
