@@ -23,12 +23,7 @@ public class FlowFieldGenerator : MonoBehaviour
     // Карта препятствий (255 = стена) для навигации (BFS)
     public NativeArray<byte> CostField => _costField;
 
-    // SDF — расстояние до ближайшей стены для каждой ячейки (в мировых единицах).
-    // Положительное значение = свободное пространство, 0 или отрицательное = внутри стены.
-    public NativeArray<float> WallSDF => _wallSDF;
-
     private NativeArray<byte> _costField;
-    private NativeArray<float> _wallSDF;
     private NativeArray<int> _integrationField;
 
     // Очередь для BFS. Переиспользуется, чтобы не было GC.Alloc.
@@ -45,25 +40,22 @@ public class FlowFieldGenerator : MonoBehaviour
         int totalCells = _gridSize.x * _gridSize.y;
         FlowField = new NativeArray<float3>(totalCells, Allocator.Persistent);
         _costField = new NativeArray<byte>(totalCells, Allocator.Persistent);
-        _wallSDF = new NativeArray<float>(totalCells, Allocator.Persistent);
         _integrationField = new NativeArray<int>(totalCells, Allocator.Persistent);
 
         _cellsToCheck = new Queue<int2>(totalCells);
 
         GenerateCostField();
-        // SDF генерируется в Start() — Physics.Raycast не работает в Awake()
     }
 
     private void Start()
     {
-        GenerateWallSDF();
+        // ...
     }
 
     private void OnDestroy()
     {
         if (FlowField.IsCreated) FlowField.Dispose();
         if (_costField.IsCreated) _costField.Dispose();
-        if (_wallSDF.IsCreated) _wallSDF.Dispose();
         if (_integrationField.IsCreated) _integrationField.Dispose();
     }
 
@@ -86,61 +78,6 @@ public class FlowFieldGenerator : MonoBehaviour
                 _costField[GetIndex(x, y)] = isObstacle ? (byte)255 : (byte)1;
             }
         }
-    }
-
-    /// <summary>
-    /// Генерация SDF (расстояние до ближайшей поверхности стены).
-    /// Вызывать только из Start() — Physics.Raycast не работает в Awake().
-    /// </summary>
-    private void GenerateWallSDF()
-    {
-        float3 bottomLeft = WorldBottomLeft;
-        float safeDist = _cellDiameter * 5f; // Далёкие от стен ячейки получают большое значение — агенты на них не останавливаются
-        float maxRayDist = _cellDiameter * 4f; // Дальше не смотрим — впереди ничего не изменится
-
-        Vector3[] dirs = {
-            Vector3.forward, Vector3.back, Vector3.left, Vector3.right,
-            (Vector3.forward + Vector3.right).normalized,
-            (Vector3.forward + Vector3.left).normalized,
-            (Vector3.back + Vector3.right).normalized,
-            (Vector3.back + Vector3.left).normalized
-        };
-
-        for (int x = 0; x < _gridSize.x; x++)
-        {
-            for (int y = 0; y < _gridSize.y; y++)
-            {
-                int idx = GetIndex(x, y);
-
-                // Стены: SDF = 0
-                if (_costField[idx] == 255)
-                {
-                    _wallSDF[idx] = 0f;
-                    continue;
-                }
-
-                float3 worldPoint = bottomLeft + new float3(
-                    x * _cellDiameter + CellRadius, 0,
-                    y * _cellDiameter + CellRadius);
-                // Рейкасты из центра ячейки на высоте агента
-                Vector3 center = new Vector3(worldPoint.x, transform.position.y + 0.5f, worldPoint.z);
-
-                float minDist = safeDist;
-                for (int d = 0; d < dirs.Length; d++)
-                {
-                    if (Physics.Raycast(center, dirs[d], out RaycastHit hit, maxRayDist, UnwalkableMask))
-                    {
-                        if (hit.distance < minDist)
-                            minDist = hit.distance;
-                    }
-                }
-
-                _wallSDF[idx] = minDist;
-            }
-        }
-
-        Debug.Log($"[FlowFieldGenerator] WallSDF сгенерирован: {_gridSize.x * _gridSize.y} ячеек, " +
-                  $"макс. рейкаст = {maxRayDist:F1}м, слой = {LayerMask.LayerToName(Mathf.RoundToInt(Mathf.Log(UnwalkableMask, 2)))}");
     }
 
     private void Update()
@@ -224,14 +161,24 @@ public class FlowFieldGenerator : MonoBehaviour
                     {
                         if (nx == 0 && ny == 0) continue;
                         int2 neighbor = new int2(x + nx, y + ny);
-                        if (IsValid(neighbor))
+                        if (!IsValid(neighbor)) continue;
+                        if (_costField[GetIndex(neighbor.x, neighbor.y)] == 255) continue;
+
+                        // ВОТ ГЛАВНЫЙ ФИКС:
+                        // Если шаг диагональный — проверяем оба "срезаемых" угла.
+                        // Если хотя бы один из них стена — эта диагональ запрещена.
+                        if (nx != 0 && ny != 0)
                         {
-                            int neighborIndex = GetIndex(neighbor.x, neighbor.y);
-                            if (_integrationField[neighborIndex] < bestCost)
-                            {
-                                bestCost = _integrationField[neighborIndex];
-                                bestNeighbor = neighbor;
-                            }
+                            bool cornerA = _costField[GetIndex(x + nx, y)] == 255;
+                            bool cornerB = _costField[GetIndex(x, y + ny)] == 255;
+                            if (cornerA || cornerB) continue; // срезать угол нельзя
+                        }
+
+                        int neighborIndex = GetIndex(neighbor.x, neighbor.y);
+                        if (_integrationField[neighborIndex] < bestCost)
+                        {
+                            bestCost = _integrationField[neighborIndex];
+                            bestNeighbor = neighbor;
                         }
                     }
                 }

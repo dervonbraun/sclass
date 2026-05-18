@@ -241,7 +241,6 @@ public class SwarmManager : MonoBehaviour
             Agents = _agents,
             FlowField = FlowField.FlowField,
             CostField = FlowField.CostField,
-            WallSDF = FlowField.WallSDF,
             HashMap = _hashMap,
             AgentPositions = _agentPositions,
             GridSize = FlowField.GridSize,
