@@ -1,10 +1,6 @@
+using System.Collections;
 using UnityEngine;
 
-/// <summary>
-/// Снаряд с реалистичной баллистикой.
-/// Движется через Rigidbody + кастомный drag + гравитация.
-/// Никакого Raycast — только физика.
-/// </summary>
 [RequireComponent(typeof(Rigidbody))]
 public class Projectile : MonoBehaviour
 {
@@ -12,23 +8,31 @@ public class Projectile : MonoBehaviour
     private WeaponSettingsSO     weaponSettings;
     private float                travelDistance;
     private Vector3              spawnPosition;
+    private bool                 isDying;
 
+    private Rigidbody            rb;
+    private Renderer             projectileRenderer;
+    private MaterialPropertyBlock mpb;
 
-
-    private Rigidbody rb;
+    // Стартовые цвета, читаются один раз при Launch
+    private Color _startEmission;
+    private Color _startBaseColor;
 
     [Header("Debug")]
     [SerializeField] private bool showDebug = true;
 
+    // Названия свойств HDRP Lit
+    private static readonly int PropEmissive = Shader.PropertyToID("_EmissiveColor");
+    private static readonly int PropBaseColor = Shader.PropertyToID("_BaseColor");
+
     private void Awake()
     {
         rb = GetComponent<Rigidbody>();
+        projectileRenderer = GetComponentInChildren<Renderer>();
+        if (projectileRenderer != null)
+            mpb = new MaterialPropertyBlock();
     }
 
-    /// <summary>
-    /// Вызывается сразу после Instantiate.
-    /// ownerColliders — коллайдеры игрока (чтобы пуля не стреляла в себя).
-    /// </summary>
     public void Launch(Vector3 velocity, WeaponSettingsSO wSettings, ProjectileSettingsSO pSettings,
                        Collider[] ownerColliders = null)
     {
@@ -36,34 +40,43 @@ public class Projectile : MonoBehaviour
         projectileSettings = pSettings;
         spawnPosition      = transform.position;
 
-
-
-        // Игнорируем столкновения со всеми коллайдерами игрока
         if (ownerColliders != null)
         {
             Collider myCollider = GetComponent<Collider>();
             if (myCollider != null)
-            {
                 foreach (Collider c in ownerColliders)
-                {
                     if (c != null)
                         Physics.IgnoreCollision(myCollider, c, true);
-                }
-            }
         }
 
-        rb.useGravity    = false;
-        rb.linearDamping = 0f;
-        rb.mass          = pSettings.mass;
+        rb.useGravity     = false;
+        rb.linearDamping  = 0f;
+        rb.mass           = pSettings.mass;
         rb.linearVelocity = velocity;
+
+        // Читаем стартовые цвета из материала ОДИН РАЗ здесь,
+        // пока MPB ещё пустой — sharedMaterial даёт правильные значения
+        if (projectileRenderer != null)
+        {
+            Material mat = projectileRenderer.sharedMaterial;
+            _startEmission  = mat.HasProperty(PropEmissive)  ? mat.GetColor(PropEmissive)  : Color.black;
+            _startBaseColor = mat.HasProperty(PropBaseColor) ? mat.GetColor(PropBaseColor) : Color.white;
+
+            // Сразу пишем в MPB, чтобы дальше работать только с ним
+            projectileRenderer.GetPropertyBlock(mpb);
+            mpb.SetColor(PropEmissive,  _startEmission);
+            mpb.SetColor(PropBaseColor, _startBaseColor);
+            projectileRenderer.SetPropertyBlock(mpb);
+        }
 
         if (pSettings.tracerEffectPrefab != null)
             Instantiate(pSettings.tracerEffectPrefab, transform.position, Quaternion.identity, transform);
 
-        Destroy(gameObject, pSettings.lifetime);
+        float fadeStart = Mathf.Max(0f, pSettings.lifetime - pSettings.fadeOutDuration);
+        Invoke(nameof(BeginFadeOut), fadeStart);
     }
 
-    // ── Физика ─────────────────────────────────────────────────
+    // ── Физика ────────────────────────────────────────────────────────────
 
     private void FixedUpdate()
     {
@@ -71,29 +84,72 @@ public class Projectile : MonoBehaviour
 
         Vector3 velocity = rb.linearVelocity;
 
-        // Кастомная гравитация
         rb.AddForce(Physics.gravity * projectileSettings.gravityMultiplier, ForceMode.Acceleration);
 
-        // Аэродинамическое сопротивление
         if (projectileSettings.drag > 0f)
             rb.AddForce(-projectileSettings.drag * velocity, ForceMode.Acceleration);
 
-        // Поворот по вектору скорости
         if (velocity.sqrMagnitude > 0.01f)
             transform.rotation = Quaternion.LookRotation(rb.linearVelocity);
 
-        // Проверка дальности
         travelDistance = Vector3.Distance(spawnPosition, transform.position);
-        if (travelDistance >= projectileSettings.maxRange)
-            Destroy(gameObject);
+        if (travelDistance >= projectileSettings.maxRange && !isDying)
+            BeginFadeOut();
     }
 
-    // ── Столкновение ───────────────────────────────────────────
+    // ── Угасание ──────────────────────────────────────────────────────────
+
+    private void BeginFadeOut()
+    {
+        if (isDying) return;
+        isDying = true;
+        CancelInvoke(nameof(BeginFadeOut));
+        StartCoroutine(FadeOutRoutine(projectileSettings.fadeOutDuration));
+    }
+
+    private IEnumerator FadeOutRoutine(float duration)
+    {
+        if (projectileRenderer == null) { Destroy(gameObject); yield break; }
+
+        Vector3 startScale = transform.localScale;
+        float elapsed = 0f;
+
+        while (elapsed < duration)
+        {
+            elapsed += Time.deltaTime;
+            float t = Mathf.Clamp01(elapsed / duration);
+
+            // Меш сжимается в точку — Base Color больше не виден
+            transform.localScale = Vector3.Lerp(startScale, Vector3.zero, t);
+
+            // Emission: жёлтый → красный → чёрный
+            Color emissionNow;
+            if (t < 0.5f)
+            {
+                Color midColor = new Color(_startEmission.r, 0f, 0f, _startEmission.a);
+                emissionNow = Color.Lerp(_startEmission, midColor, t * 2f);
+            }
+            else
+            {
+                Color midColor = new Color(_startEmission.r, 0f, 0f, _startEmission.a);
+                emissionNow = Color.Lerp(midColor, Color.black, (t - 0.5f) * 2f);
+            }
+
+            projectileRenderer.GetPropertyBlock(mpb);
+            mpb.SetColor(PropEmissive, emissionNow);
+            projectileRenderer.SetPropertyBlock(mpb);
+
+            yield return null;
+        }
+
+        Destroy(gameObject);
+    }
+
+    // ── Столкновение ──────────────────────────────────────────────────────
 
     private void OnCollisionEnter(Collision collision)
     {
         if (projectileSettings == null) return;
-
         if ((projectileSettings.hitLayers.value & (1 << collision.gameObject.layer)) == 0) return;
 
         ContactPoint contact = collision.GetContact(0);
@@ -104,8 +160,7 @@ public class Projectile : MonoBehaviour
     {
         if (weaponSettings == null) return;
 
-        // Множитель урона по дистанции
-        float distMult = weaponSettings.GetDamageMultiplier(travelDistance);
+        float distMult    = weaponSettings.GetDamageMultiplier(travelDistance);
         float totalDamage = 0f;
 
         if (weaponSettings.splashRadius > 0f)
@@ -126,7 +181,6 @@ public class Projectile : MonoBehaviour
             ApplyDamage(target, totalDamage);
         }
 
-        // ── Визуальный дебаг (видно в Game View) ───────────────────────
         if (showDebug)
         {
             if (WeaponDebugger.Instance != null)
@@ -142,11 +196,8 @@ public class Projectile : MonoBehaviour
             }
             else
             {
-                // Фоллбэк: только Scene View (старое поведение)
-                Debug.Log($"<color=cyan>[Projectile]</color> Hit <b>{target.name}</b> | dmg={totalDamage:F1} | dist={travelDistance:F1}m | layer={LayerMask.LayerToName(target.layer)}", target);
+                Debug.Log($"<color=cyan>[Projectile]</color> Hit <b>{target.name}</b> | dmg={totalDamage:F1} | dist={travelDistance:F1}m", target);
                 Debug.DrawRay(hitPoint, hitNormal, Color.red, 3f);
-                Debug.DrawLine(hitPoint - Vector3.right * 0.15f, hitPoint + Vector3.right * 0.15f, Color.red, 3f);
-                Debug.DrawLine(hitPoint - Vector3.up    * 0.15f, hitPoint + Vector3.up    * 0.15f, Color.red, 3f);
                 Debug.DrawLine(spawnPosition, hitPoint, Color.yellow, 2f);
             }
         }

@@ -16,7 +16,8 @@ MonoBehaviour:
   drag: 0.1
   gravityMultiplier: 1
   maxRange: 500
-  lifetime: 10
+  lifetime: 2
+  fadeOutDuration: 2
   hitLayers:
     serializedVersion: 2
     m_Bits: 128

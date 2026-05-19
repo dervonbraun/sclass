@@ -57,10 +57,6 @@ public class AgentHealth : MonoBehaviour, IDamageable
         _isDead = true;
         _currentHealth = 0f;
 
-        // Обновляем кэш на случай если что-то добавилось после Awake
-        _renderers = GetComponentsInChildren<Renderer>(includeInactive: true);
-        _colliders = GetComponentsInChildren<Collider>(includeInactive: true);
-
         // Скрываем визуал
         foreach (var r in _renderers) r.enabled = false;
 
@@ -70,13 +66,16 @@ public class AgentHealth : MonoBehaviour, IDamageable
         // Переносим на слой Ignore Raycast — пули и OverlapSphere его не видят
         SetLayerRecursive(gameObject, 2); // 2 = Ignore Raycast
 
+        // Запоминаем позицию ДО телепорта, чтобы эффект появился в правильном месте
+        UnityEngine.Vector3 deathPosition = transform.position;
+
         // Телепортируем глубоко под карту — агент невидим и коллизий нет,
         // но Job System по-прежнему может двигать его (transform остаётся активным)
-        transform.position = new UnityEngine.Vector3(transform.position.x, -1000f, transform.position.z);
+        transform.position = new UnityEngine.Vector3(deathPosition.x, -1000f, deathPosition.z);
 
         // Эффект смерти
         if (DeathEffectPrefab != null)
-            Instantiate(DeathEffectPrefab, transform.position, UnityEngine.Quaternion.identity);
+            Instantiate(DeathEffectPrefab, deathPosition, UnityEngine.Quaternion.identity);
 
         // Сообщаем SwarmManager: пометить агента как Dead в NativeArray
         _swarmManager?.KillAgent(AgentIndex);

@@ -17,6 +17,10 @@ public class ProjectileSettingsSO : ScriptableObject
     [Tooltip("Lifetime снаряда (сек) — fallback, если он пролетает дальше maxRange")]
     public float lifetime = 10f;
 
+    [Header("Визуал")]
+    [Tooltip("Время (сек) плавного угасания эмиссии перед уничтожением")]
+    public float fadeOutDuration = 0.15f;
+
     [Header("Попадание")]
     [Tooltip("Слои, с которыми снаряд взаимодействует")]
     public LayerMask hitLayers = ~0; // все слои по умолчанию

@@ -84,6 +84,7 @@ public class SwarmManager : MonoBehaviour
     private NativeArray<float3> _agentPositions;
     private TransformAccessArray _transformAccessArray;
     private NativeParallelMultiHashMap<int, int> _hashMap;
+    private JobHandle _swarmHandle;
 
     /// <summary>Количество живых агентов (не Dead). Обновляется каждый кадр.</summary>
     public int AliveCount { get; private set; }
@@ -204,7 +205,9 @@ public class SwarmManager : MonoBehaviour
 
     private void OnDestroy()
     {
-        // Обязательное освобождение не-управляемой памяти
+        // Завершаем все активные джобы перед освобождением памяти
+        _swarmHandle.Complete();
+
         if (_agents.IsCreated) _agents.Dispose();
         if (_agentPositions.IsCreated) _agentPositions.Dispose();
         if (_hashMap.IsCreated) _hashMap.Dispose();
@@ -213,7 +216,7 @@ public class SwarmManager : MonoBehaviour
 
     private void Update()
     {
-        if (FlowField.FlowField == null || !FlowField.FlowField.IsCreated)
+        if (FlowField == null || !FlowField.FlowField.IsCreated || Player == null)
             return;
 
         // 1. Очищаем хэш-сетку на каждый кадр
@@ -279,8 +282,8 @@ public class SwarmManager : MonoBehaviour
 
         // Запуск цепочки Джоб и ожидание их выполнения.
         // P.S: Для оптимизации .Complete() можно перенести в LateUpdate.
-        JobHandle swarmHandle = swarmJob.Schedule(_transformAccessArray, hashHandle);
-        swarmHandle.Complete();
+        _swarmHandle = swarmJob.Schedule(_transformAccessArray, hashHandle);
+        _swarmHandle.Complete();
 
         // Пересчитываем живых агентов напрямую из NativeArray — надёжнее любого декремента
         int alive = 0;

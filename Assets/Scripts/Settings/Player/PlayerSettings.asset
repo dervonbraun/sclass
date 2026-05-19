@@ -13,7 +13,9 @@ MonoBehaviour:
   m_Name: PlayerSettings
   m_EditorClassIdentifier: Assembly-CSharp::PlayerSettingsSO
   walkSpeed: 5
-  sprintSpeed: 8
+  sprintSpeed: 10
+  sprintSpamAdd: 1
+  sprintSpamDecay: 2
   acceleration: 10
   deceleration: 10
   gravity: -9.81
@@ -21,9 +23,15 @@ MonoBehaviour:
   mouseSensitivity: 2
   cameraSmoothTime: 0.05
   idleBobFrequency: 1
-  idleBobAmplitude: 0.05
+  idleBobAmplitudeY: 0.004
+  idleBobAmplitudeX: 0.001
   walkBobFrequency: 5
-  walkBobAmplitude: 0.1
+  walkBobAmplitudeY: 0.008
+  walkBobAmplitudeX: 0.005
+  walkBobTilt: 0.4
   sprintBobFrequency: 8
-  sprintBobAmplitude: 0.15
-  headbobSmoothTime: 0.1
+  sprintBobAmplitudeY: 0.014
+  sprintBobAmplitudeX: 0.009
+  sprintBobTilt: 0.8
+  headbobTransitionSpeed: 6
+  headbobResetSpeed: 8

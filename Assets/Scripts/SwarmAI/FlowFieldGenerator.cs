@@ -47,11 +47,6 @@ public class FlowFieldGenerator : MonoBehaviour
         GenerateCostField();
     }
 
-    private void Start()
-    {
-        // ...
-    }
-
     private void OnDestroy()
     {
         if (FlowField.IsCreated) FlowField.Dispose();
@@ -89,6 +84,9 @@ public class FlowFieldGenerator : MonoBehaviour
         }
     }
 
+    private static readonly int[] s_dx = { -1, 1, 0, 0 };
+    private static readonly int[] s_dy = { 0, 0, -1, 1 };
+
     private void GenerateIntegrationField()
     {
         // Сброс Integration Field
@@ -99,15 +97,14 @@ public class FlowFieldGenerator : MonoBehaviour
 
         int2 targetCell = WorldToCell(Target.position);
         if (!IsValid(targetCell)) return;
+        // Если игрок стоит в ячейке-стене — навигация невозможна
+        if (_costField[GetIndex(targetCell.x, targetCell.y)] == 255) return;
 
         int targetIndex = GetIndex(targetCell.x, targetCell.y);
         _integrationField[targetIndex] = 0;
-        
+
         _cellsToCheck.Clear();
         _cellsToCheck.Enqueue(targetCell);
-
-        int[] dx = { -1, 1, 0, 0 };
-        int[] dy = { 0, 0, -1, 1 };
 
         // BFS для расчета расстояний (Dijkstra/BFS)
         while (_cellsToCheck.Count > 0)
@@ -118,7 +115,7 @@ public class FlowFieldGenerator : MonoBehaviour
 
             for (int i = 0; i < 4; i++)
             {
-                int2 neighbor = new int2(current.x + dx[i], current.y + dy[i]);
+                int2 neighbor = new int2(current.x + s_dx[i], current.y + s_dy[i]);
                 if (IsValid(neighbor))
                 {
                     int neighborIndex = GetIndex(neighbor.x, neighbor.y);
