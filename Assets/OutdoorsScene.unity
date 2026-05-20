@@ -726,7 +726,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!224 &392338199
 RectTransform:
   m_ObjectHideFlags: 0
@@ -1923,7 +1923,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!224 &1772056028
 RectTransform:
   m_ObjectHideFlags: 0
@@ -2186,6 +2186,20 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::EffectTester
   HypertrophySO: {fileID: 11400000, guid: 925fc69851fd1364b9464def64809d57, type: 2}
   KineticMirrorSO: {fileID: 11400000, guid: c62cab11406ed6e47aca432576458519, type: 2}
+--- !u!114 &1964603014
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1964602986}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e22661ce57a5c7248a659197f04eaafb, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerInputBlocker
+  inputActions: {fileID: -944628639613478452, guid: 35845fe01580c41289b024647b1d1c53, type: 3}
+  actionMapName: Player
 --- !u!1 &2013410473
 GameObject:
   m_ObjectHideFlags: 1
@@ -2684,6 +2698,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 3116146903493366832, guid: c7c82a532e6dc944fbbfa3db9393db18, type: 3}
       insertIndex: -1
       addedObject: {fileID: 1964603008}
+    - targetCorrespondingSourceObject: {fileID: 3116146903493366832, guid: c7c82a532e6dc944fbbfa3db9393db18, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1964603014}
   m_SourcePrefab: {fileID: 100100000, guid: c7c82a532e6dc944fbbfa3db9393db18, type: 3}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:

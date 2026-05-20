@@ -1,6 +1,6 @@
 using UnityEngine;
-using UnityEngine.UI;
 using UnityEngine.SceneManagement;
+using UnityEngine.UI;
 using TMPro;
 using System.Collections;
 
@@ -9,6 +9,7 @@ public class SecondFrameFader : MonoBehaviour
     public CanvasGroup group;
     public float duration;
     public float fadeTime;
+    public System.Action onComplete;
 
     private IEnumerator Start()
     {
@@ -21,6 +22,9 @@ public class SecondFrameFader : MonoBehaviour
             yield return null;
         }
         if (group != null) group.alpha = 0f;
+
+        onComplete?.Invoke();
+
         Destroy(gameObject);
     }
 }
@@ -47,62 +51,64 @@ public class DeathScreenManager : MonoBehaviour
     private void Start()
     {
         if (DeathScreenContainer != null)
-        {
             DeathScreenContainer.SetActive(false);
-        }
     }
 
     public void TriggerDeath()
     {
         if (DeathScreenContainer == null) return;
-        
+
+        FindObjectOfType<PlayerInputBlocker>()?.SetInputBlocked(true);
+
         DeathScreenContainer.SetActive(true);
-        FirstFrame.gameObject.SetActive(true);
-        SecondFrame.gameObject.SetActive(true);
-        
-        // Setup initial states
-        FirstFrame.alpha = 1f;
-        SecondFrame.alpha = 1f;
-        
-        if (phrasesData != null && DeathText != null)
+
+        if (FirstFrame != null)
         {
-            DeathText.text = phrasesData.GetRandomPhrase();
+            FirstFrame.gameObject.SetActive(true);
+            FirstFrame.alpha = 1f;
         }
+
+        if (SecondFrame != null)
+        {
+            SecondFrame.gameObject.SetActive(true);
+            SecondFrame.alpha = 1f;
+        }
+
+        if (phrasesData != null && DeathText != null)
+            DeathText.text = phrasesData.GetRandomPhrase();
 
         StartCoroutine(DeathSequence());
     }
 
     private IEnumerator DeathSequence()
     {
-        // Wait FirstFrame duration
         yield return new WaitForSeconds(firstFrameDuration);
 
-        // Smoothly fade out FirstFrame
-        float t = 0;
-        while (t < firstFrameFadeTime)
+        if (FirstFrame != null)
         {
-            t += Time.deltaTime;
-            FirstFrame.alpha = Mathf.Lerp(1f, 0f, t / firstFrameFadeTime);
-            yield return null;
+            float t = 0;
+            while (t < firstFrameFadeTime)
+            {
+                t += Time.deltaTime;
+                FirstFrame.alpha = Mathf.Lerp(1f, 0f, t / firstFrameFadeTime);
+                yield return null;
+            }
+            FirstFrame.alpha = 0f;
+            FirstFrame.gameObject.SetActive(false);
         }
-        FirstFrame.alpha = 0f;
-        FirstFrame.gameObject.SetActive(false); // Hide it so it doesn't render behind SecondFrame
 
-        // Extract Canvas scaler settings before unparenting
         Canvas parentCanvas = DeathScreenContainer.GetComponentInParent<Canvas>();
         CanvasScaler parentScaler = parentCanvas != null ? parentCanvas.GetComponent<CanvasScaler>() : null;
 
-        // Detach DeathScreenContainer and make it survive the scene load
         DeathScreenContainer.transform.SetParent(null);
         DontDestroyOnLoad(DeathScreenContainer);
 
-        // Ensure it has a Canvas to render as a root object
         Canvas canvas = DeathScreenContainer.GetComponent<Canvas>();
         if (canvas == null)
         {
             canvas = DeathScreenContainer.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = 999; // Ensure it renders on top of the new scene
+            canvas.sortingOrder = 999;
 
             if (parentScaler != null)
             {
@@ -117,16 +123,17 @@ public class DeathScreenManager : MonoBehaviour
             canvas.sortingOrder = 999;
         }
 
-        // Add the fader component that will handle SecondFrame and destroy the container later
         SecondFrameFader fader = DeathScreenContainer.AddComponent<SecondFrameFader>();
         fader.group = SecondFrame;
         fader.duration = secondFrameDuration;
         fader.fadeTime = secondFrameFadeTime;
+        fader.onComplete = () =>
+        {
+            // После загрузки сцены старая ссылка недействительна — ищем в новой сцене
+            PlayerInputBlocker blocker = FindObjectOfType<PlayerInputBlocker>();
+            if (blocker != null) blocker.SetInputBlocked(false);
+        };
 
-        // Restart the current scene exactly when FirstFrame disappears
-#if UNITY_EDITOR
-        UnityEditor.Selection.activeObject = null;
-#endif
         SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
     }
 }

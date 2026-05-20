@@ -367,6 +367,7 @@ public struct SwarmJob : IJobParallelForTransform
 
         if (agent.State == SwarmState.Swarming)
         {
+            // playerRepel исключён из нормализации — иначе он "съедается" при длинном суммарном векторе
             targetVelocity = separation * SeparationWeight +
                              math.normalizesafe(alignment) * AlignmentWeight +
                              math.normalizesafe(cohesion) * CohesionWeight +
@@ -375,11 +376,14 @@ public struct SwarmJob : IJobParallelForTransform
                              pressureForce * PressureWeight +
                              lateralForce * LateralSpreadWeight +
                              viscosityForce * ViscosityWeight +
-                             obstacleForce * ObstacleAvoidWeight +
-                             playerRepel;
+                             obstacleForce * ObstacleAvoidWeight;
 
             if (math.lengthsq(targetVelocity) > 0.001f)
                 targetVelocity = math.normalizesafe(targetVelocity) * MaxSpeed;
+
+            // Добавляем playerRepel после нормализации — он не ограничен MaxSpeed намеренно,
+            // чтобы агент мог быстро уйти от игрока в узком коридоре
+            targetVelocity += playerRepel;
         }
         else if (agent.State == SwarmState.Charging)
         {
@@ -389,11 +393,12 @@ public struct SwarmJob : IJobParallelForTransform
                              wanderDir * (WanderWeight * 0.3f) +
                              pressureForce * (PressureWeight * 0.5f) +
                              lateralForce * (LateralSpreadWeight * 0.3f) +
-                             obstacleForce * ObstacleAvoidWeight +
-                             playerRepel;
-            
+                             obstacleForce * ObstacleAvoidWeight;
+
             if (math.lengthsq(targetVelocity) > 0.001f)
                 targetVelocity = math.normalizesafe(targetVelocity) * (MaxSpeed * ChargeSpeedMult);
+
+            targetVelocity += playerRepel;
         }
 
         // Интерполяция скорости (инерция роя). Сглаживаем у стен, чтобы не дёргалось.
@@ -522,6 +527,26 @@ public struct SwarmJob : IJobParallelForTransform
         float3 maxMap = FlowFieldOrigin + new float3(GridSize.x * FlowFieldCellSize, 0, GridSize.y * FlowFieldCellSize);
         position.x = math.clamp(position.x, minMap.x + WallDistance, maxMap.x - WallDistance);
         position.z = math.clamp(position.z, minMap.z + WallDistance, maxMap.z - WallDistance);
+
+        // --- ФИНАЛЬНАЯ ЖЁСТКАЯ ЗОНА: агент НИКОГДА не касается физического коллайдера игрока ---
+        // Выполняется последней, после резолва стен, чтобы всегда побеждать.
+        // Это предотвращает выталкивание игрока за карту в узких коридорах:
+        // агент лучше слегка войдёт в стену, чем Physics разрулит overlap через CharacterController игрока.
+        float3 toPlayerFinal = position - PlayerPosition;
+        toPlayerFinal.y = 0;
+        float distToPlayerFinal = math.length(toPlayerFinal);
+        // Добавляем зазор 0.15 поверх суммы радиусов, чтобы не доходить до порога Physics resolution
+        float playerExclusionDist = PlayerRadius + AgentRadius + 0.15f;
+        if (distToPlayerFinal < playerExclusionDist && distToPlayerFinal > 0.001f)
+        {
+            float3 pushAwayDir = toPlayerFinal / distToPlayerFinal;
+            position = new float3(PlayerPosition.x, position.y, PlayerPosition.z) + pushAwayDir * playerExclusionDist;
+
+            // Гасим компоненту скорости, направленную К игроку, чтобы не копился импульс
+            float velTowardPlayer = math.dot(agent.Velocity, -pushAwayDir);
+            if (velTowardPlayer > 0)
+                agent.Velocity -= -pushAwayDir * velTowardPlayer;
+        }
 
         // Поворот агента по вектору движения
         if (math.lengthsq(agent.Velocity) > 0.01f)

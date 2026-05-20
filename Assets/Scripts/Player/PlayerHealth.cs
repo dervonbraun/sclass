@@ -53,6 +53,7 @@ public class PlayerHealth : MonoBehaviour
 
     [Header("Death Screen")]
     public DeathScreenManager DeathScreen;
+    private DamageContext _reusableDamageContext;
 
     // ── Состояние ──────────────────────────────────────────────────
     public float CurrentHealth { get; private set; }
@@ -68,6 +69,9 @@ public class PlayerHealth : MonoBehaviour
         MaxHealth.BaseValue = InitialBaseHealth;
         CurrentHealth = MaxHealth.GetValue();
         UpdateUI();
+        
+        // ИНИЦИАЛИЗИРУЙТЕ ЗДЕСЬ, а не в TakeDamage
+        _reusableDamageContext = new DamageContext();
         
         // Сбрасываем все эффекты при старте
         if (DamageGlowGroup != null) DamageGlowGroup.alpha = 0f;
@@ -95,16 +99,11 @@ public class PlayerHealth : MonoBehaviour
 
     // ── Публичный API ──────────────────────────────────────────────
 
-    private DamageContext _reusableDamageContext;
-
     public void TakeDamage(float amount, GameObject sender = null)
     {
         if (IsDead) return;
 
-        // PERF: Избегаем аллокаций при непрерывном уроне
-        if (_reusableDamageContext == null)
-            _reusableDamageContext = new DamageContext();
-
+        // Убираем проверку на null, так как _reusableDamageContext уже инициализирован
         _reusableDamageContext.Sender = sender;
         _reusableDamageContext.Target = gameObject;
         _reusableDamageContext.RawDamage = amount;
@@ -210,9 +209,10 @@ public class PlayerHealth : MonoBehaviour
     {
         if (!TryGetComponent(out CharacterController cc)) return;
         Gizmos.color = new Color(1f, 0.3f, 0.3f, 0.4f);
-        if (Swarm != null)
+        if (Swarm != null) // ДОБАВЬТЕ ЭТУ ПРОВЕРКУ
         {
             Gizmos.DrawWireSphere(transform.position + Vector3.up * (cc.height * 0.5f), Swarm.AgentAttackRadius);
         }
+
     }
 }
