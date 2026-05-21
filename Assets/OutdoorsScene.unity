@@ -505,7 +505,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &268202494
 RectTransform:
   m_ObjectHideFlags: 0
@@ -620,7 +620,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &326842254
 RectTransform:
   m_ObjectHideFlags: 0
@@ -1302,6 +1302,7 @@ MonoBehaviour:
   AgentPrefab: {fileID: 4820411320186206332, guid: 95d42fbc3c1dd8f46a8dca69d014e693, type: 3}
   Player: {fileID: 1964602993}
   FlowField: {fileID: 2027530740}
+  SdfGrid: {fileID: 2027530742}
   AgentCountText: {fileID: 0}
   SwarmSize: 50
   SpawnRadius: 20
@@ -1324,15 +1325,25 @@ MonoBehaviour:
   AgentAttackRadius: 1.1
   MutationEffects:
   - Type: 0
-    AmountPerSecond: -5
+    AmountPerSecond: 0
   - Type: 2
-    AmountPerSecond: -3
+    AmountPerSecond: 0
   MaxSpeed: 4
   ChargeSpeedMult: 1.5
   ChargeRadius: 10
   AgentRadius: 0.3
   WallDistance: 0.1
   PlayerRadius: 0.5
+  Gathered:
+    CohesionWeight: 3
+    SeparationWeight: 0.5
+    LateralSpreadWeight: 0.3
+    FlowFieldWeight: 4
+  Scattered:
+    CohesionWeight: 0.2
+    SeparationWeight: 2.5
+    LateralSpreadWeight: 2
+    FlowFieldWeight: 1.5
 --- !u!4 &731351300
 Transform:
   m_ObjectHideFlags: 0
@@ -1547,7 +1558,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &874724829
 RectTransform:
   m_ObjectHideFlags: 0
@@ -2803,7 +2814,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PlayerHealth
   HitboxRadiusMultiplier:
     BaseValue: 1
-  GlowBorderGroup: {fileID: 874724832}
+  GlowBorderGroup: {fileID: 2144913987}
   GainMaterial: {fileID: 2100000, guid: 3bcd34d286a58e2438de4e97eed7db6e, type: 2}
   LoseMaterial: {fileID: 2100000, guid: 16d47705caff5564aaff2d01d0dde9d8, type: 2}
   ColorD: {r: 1, g: 0, b: 0, a: 1}
@@ -3018,6 +3029,7 @@ GameObject:
   m_Component:
   - component: {fileID: 2027530741}
   - component: {fileID: 2027530740}
+  - component: {fileID: 2027530742}
   m_Layer: 0
   m_Name: FlowField
   m_TagString: Untagged
@@ -3038,8 +3050,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::FlowFieldGenerator
   GridWorldSize:
-    x: 16.9
-    y: 10.9
+    x: 167.7
+    y: 111.6
   CellRadius: 0.5
   UnwalkableMask:
     serializedVersion: 2
@@ -3060,6 +3072,30 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &2027530742
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2027530739}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f07ba1601b1c9b642b5cb7090f655941, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SDFGrid
+  GridOrigin:
+    x: 45.5
+    y: 0
+    z: -2.2
+  GridSize:
+    x: 100
+    y: 20
+    z: 100
+  CellSize: 0.5
+  UnwalkableMask:
+    serializedVersion: 2
+    m_Bits: 8
 --- !u!1 &2098074476 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: -516098083770646512, guid: ff9581ed5a089b64089168309d587e68, type: 3}
@@ -3286,7 +3322,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: fe87c0e1cc204ed48ad3b37840f39efc, type: 3}
   m_Name: 
   m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.UI.Image
-  m_Material: {fileID: 2100000, guid: 3bcd34d286a58e2438de4e97eed7db6e, type: 2}
+  m_Material: {fileID: 0}
   m_Color: {r: 1, g: 1, b: 1, a: 1}
   m_RaycastTarget: 1
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
