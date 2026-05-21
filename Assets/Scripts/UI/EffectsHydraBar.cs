@@ -1,58 +1,55 @@
-using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using Sclass.EffectsSystem;
 
 namespace Sclass.UI
 {
+    /// <summary>
+    /// Gradient bar driven by ElementalMutationManager.OnUIUpdate.
+    /// Always shows three segments: Kinesia | Smallion | Transfinite.
+    /// In God Singularity mode weights lock to 1/3 each and a pulse value
+    /// (_SingularityPulse 0→1) is sent to the shader for the "reactor boil" effect.
+    ///
+    /// Shader interface: _Count (int), _EffectColors (Vector4[16]),
+    ///                   _EffectBorders (float[16]), _SingularityPulse (float).
+    /// </summary>
     [RequireComponent(typeof(Image))]
     public class EffectsHydraBar : MonoBehaviour
     {
         [Header("Settings")]
-        [Tooltip("Менеджер эффектов игрока")]
-        public EffectManager TargetManager;
-        
-        [Tooltip("Скорость 'втекания' и вытеснения эффектов")]
+        [Tooltip("Скорость интерполяции весов сегментов.")]
         public float LerpSpeed = 5f;
-        
-        [Tooltip("Задержка (КД) перед втеканием следующего эффекта при спаме (сек)")]
-        public float EffectFlowCooldown = 0.3f;
 
-        [Header("Shader Properties")]
-        private Material _hydraMaterial;
-        private Image _image;
+        [Header("Singularity Pulse")]
+        [Tooltip("Скорость пульсации в режиме Сингулярности (циклов в секунду).")]
+        public float PulseFrequency = 3f;
+
+        private Material    _hydraMaterial;
+        private Image       _image;
         private CanvasGroup _canvasGroup;
 
-        // Внутренние данные для интерполяции
-        private class EffectBarData
-        {
-            public BaseEffect Effect;
-            public float CurrentWeight;
-            public float TargetWeight;
-            public Color CurrentColor;
-            public float BasePulseMultiplier = 1f;
-        }
+        // Three fixed slots: [0] Kinesia, [1] Smallion, [2] Transfinite
+        private readonly float[] _currentWeights = { 1f / 3f, 1f / 3f, 1f / 3f };
+        private readonly float[] _targetWeights  = { 1f / 3f, 1f / 3f, 1f / 3f };
+        private readonly Color[] _colors         = new Color[3];
 
-        private List<EffectBarData> _barData = new List<EffectBarData>();
-        
-        // Очередь для защиты от спама
-        private Queue<BaseEffect> _pendingEffects = new Queue<BaseEffect>();
-        private float _lastEffectTime = -999f;
-        
-        // Массивы для передачи в шейдер (до 16 эффектов)
-        private Vector4[] _shaderColors = new Vector4[16];
-        private float[] _shaderBorders = new float[16];
+        // Shader arrays — keep size 16 to match existing shader declaration
+        private readonly Vector4[] _shaderColors  = new Vector4[16];
+        private readonly float[]   _shaderBorders = new float[16];
 
+        private bool _hasData;
+        private bool _isSingularityActive;
+        private Sclass.EffectsSystem.SynergyType _activeSynergy;
+
+        // ── Lifecycle ────────────────────────────────────────────────────────────
         private void Awake()
         {
             _image = GetComponent<Image>();
-            
-            // Получаем или добавляем CanvasGroup для плавного появления самой полоски
+
             _canvasGroup = GetComponent<CanvasGroup>();
             if (_canvasGroup == null) _canvasGroup = gameObject.AddComponent<CanvasGroup>();
             _canvasGroup.alpha = 0f;
-            
-            // Клонируем материал, чтобы не менять ассет
+
             if (_image.material != null)
             {
                 _hydraMaterial = new Material(_image.material);
@@ -62,186 +59,102 @@ namespace Sclass.UI
 
         private void OnEnable()
         {
-            if (TargetManager != null)
-            {
-                TargetManager.OnEffectAdded += QueueEffectAdded;
-                TargetManager.OnEffectRemoved += HandleEffectRemoved;
-                
-                foreach (var effect in TargetManager.ActiveEffects)
-                {
-                    QueueEffectAdded(effect);
-                }
-            }
+            ElementalMutationManager.OnUIUpdate        += HandleUIUpdate;
+            SingularityController.OnSingularityChanged += HandleSingularityChanged;
+            SynergyManager.OnActiveSynergyChanged      += HandleSynergyChanged;
         }
 
         private void OnDisable()
         {
-            if (TargetManager != null)
-            {
-                TargetManager.OnEffectAdded -= QueueEffectAdded;
-                TargetManager.OnEffectRemoved -= HandleEffectRemoved;
-            }
+            ElementalMutationManager.OnUIUpdate        -= HandleUIUpdate;
+            SingularityController.OnSingularityChanged -= HandleSingularityChanged;
+            SynergyManager.OnActiveSynergyChanged      -= HandleSynergyChanged;
         }
 
-        private void QueueEffectAdded(BaseEffect effect)
+        // ── Data input ───────────────────────────────────────────────────────────
+        private void HandleUIUpdate(MutationUIData data)
         {
-            if (!_pendingEffects.Contains(effect))
+            // In singularity the weights are locked to 1/3 by SingularityController's
+            // burn mechanic (all three drain equally), but we enforce it visually too.
+            if (!_isSingularityActive)
             {
-                _pendingEffects.Enqueue(effect);
+                _targetWeights[0] = data.KinesiaRatio;
+                _targetWeights[1] = data.SmallionRatio;
+                _targetWeights[2] = data.TransfiniteRatio;
             }
+
+            // Colors are always updated so the transition looks right on exit
+            _colors[0] = data.KinesiaColor;
+            _colors[1] = data.SmallionColor;
+            _colors[2] = data.TransfiniteColor;
+
+            _hasData = true;
         }
 
-        private void HandleEffectAdded(BaseEffect effect)
+        private void HandleSingularityChanged(bool active)
         {
-            // Если массив близок к переполнению, агрессивно удаляем "мертвые" вытекающие эффекты
-            while (_barData.Count >= 16)
-            {
-                int deadIndex = _barData.FindIndex(d => d.Effect == null);
-                if (deadIndex != -1) 
-                    _barData.RemoveAt(deadIndex);
-                else 
-                    break;
-            }
+            _isSingularityActive = active;
 
-            _barData.Add(new EffectBarData 
-            { 
-                Effect = effect, 
-                CurrentWeight = 0f, 
-                CurrentColor = effect.EffectColor 
-            });
+            if (active)
+            {
+                _targetWeights[0] = 1f / 3f;
+                _targetWeights[1] = 1f / 3f;
+                _targetWeights[2] = 1f / 3f;
+            }
         }
 
-        private void HandleEffectRemoved(BaseEffect effect)
+        private void HandleSynergyChanged(SynergyType type)
         {
-            var data = _barData.Find(d => d.Effect == effect);
-            if (data != null)
-            {
-                data.Effect = null;
-                data.TargetWeight = 0f;
-            }
+            _activeSynergy = type;
         }
 
+        // ── Update ───────────────────────────────────────────────────────────────
         private void Update()
         {
             if (_hydraMaterial == null) return;
 
-            ProcessPendingQueue();
-            UpdateWeights();
-            UpdateShaderArrays();
-            UpdateBarVisibility();
+            // Use unscaledTime for UI — singularity drops timeScale to 0.2
+            float targetAlpha = _hasData ? 1f : 0f;
+            _canvasGroup.alpha = Mathf.Lerp(_canvasGroup.alpha, targetAlpha,
+                LerpSpeed * Time.unscaledDeltaTime);
+
+            if (!_hasData) return;
+
+            LerpWeights();
+            PushToShader();
         }
 
-        private void ProcessPendingQueue()
+        private void LerpWeights()
         {
-            if (_pendingEffects.Count > 0 && Time.time - _lastEffectTime > EffectFlowCooldown)
-            {
-                BaseEffect nextEffect = _pendingEffects.Dequeue();
-                
-                // Если эффект уже успели удалить, пока он был в очереди — пропускаем
-                if (nextEffect != null && nextEffect.IsActive)
-                {
-                    HandleEffectAdded(nextEffect);
-                    _lastEffectTime = Time.time;
-                }
-            }
+            float t = LerpSpeed * Time.unscaledDeltaTime;
+            for (int i = 0; i < 3; i++)
+                _currentWeights[i] = Mathf.Lerp(_currentWeights[i], _targetWeights[i], t);
         }
 
-        private void UpdateBarVisibility()
+        private void PushToShader()
         {
-            // Плавно показываем полоску, если есть живые эффекты, и прячем, если пусто
-            bool hasActiveEffects = _barData.Exists(d => d.Effect != null);
-            float targetAlpha = hasActiveEffects ? 1f : 0f;
-            _canvasGroup.alpha = Mathf.Lerp(_canvasGroup.alpha, targetAlpha, Time.deltaTime * LerpSpeed);
-        }
+            _hydraMaterial.SetInt("_Count", 3);
 
-        private void UpdateWeights()
-        {
-            float totalTargetWeight = 0f;
-
-            // 1. Считаем целевые веса (только для живых эффектов)
-            foreach (var data in _barData)
+            float accumulated = 0f;
+            for (int i = 0; i < 3; i++)
             {
-                if (data.Effect != null)
-                {
-                    // Эффект "Агонии": можно добавить публичный метод Pulse(effect) 
-                    // или читать какое-то свойство из эффекта. Здесь читаем HudWeight.
-                    data.TargetWeight = data.Effect.HudWeight * data.BasePulseMultiplier;
-                    data.CurrentColor = data.Effect.EffectColor;
-                }
-                else
-                {
-                    data.TargetWeight = 0f;
-                }
-                totalTargetWeight += data.TargetWeight;
+                _shaderColors[i]  = (Vector4)_colors[i];
+                accumulated      += _currentWeights[i];
+                _shaderBorders[i] = accumulated;
             }
 
-            // 2. Интерполируем CurrentWeight к нормализованному TargetWeight
-            for (int i = _barData.Count - 1; i >= 0; i--)
-            {
-                var data = _barData[i];
-                float normalizedTarget = totalTargetWeight > 0f ? (data.TargetWeight / totalTargetWeight) : 0f;
-                
-                data.CurrentWeight = Mathf.Lerp(data.CurrentWeight, normalizedTarget, Time.deltaTime * LerpSpeed);
-
-                // Если вес стал почти нулем и эффект удален — полностью удаляем его из списка
-                if (data.Effect == null && data.CurrentWeight < 0.01f)
-                {
-                    _barData.RemoveAt(i);
-                }
-            }
-        }
-
-        private void UpdateShaderArrays()
-        {
-            int count = Mathf.Min(_barData.Count, 16);
-            _hydraMaterial.SetInt("_Count", count);
-
-            if (count == 0) return;
-
-            // Нормализуем текущие веса, так как их сумма может быть != 1 во время Lerp'а
-            float totalCurrentWeight = 0f;
-            for (int i = 0; i < count; i++) totalCurrentWeight += _barData[i].CurrentWeight;
-
-            float currentAccumulatedBorder = 0f;
-
-            for (int i = 0; i < count; i++)
-            {
-                var data = _barData[i];
-                
-                // Записываем цвет
-                _shaderColors[i] = data.CurrentColor;
-
-                // Записываем границу
-                float normalizedWeight = totalCurrentWeight > 0f ? (data.CurrentWeight / totalCurrentWeight) : 0f;
-                currentAccumulatedBorder += normalizedWeight;
-                
-                _shaderBorders[i] = currentAccumulatedBorder;
-            }
-
-            // Передаем в шейдер
-            _hydraMaterial.SetVectorArray("_EffectColors", _shaderColors);
+            _hydraMaterial.SetVectorArray("_EffectColors",  _shaderColors);
             _hydraMaterial.SetFloatArray("_EffectBorders", _shaderBorders);
-        }
 
-        /// <summary>
-        /// Вызов эффекта "Агонии" из других скриптов.
-        /// Заставляет цвет временно мигать и занимать больше места.
-        /// </summary>
-        public void TriggerAgonyPulse(BaseEffect effect, float intensityMult = 2f, float duration = 1f)
-        {
-            var data = _barData.Find(d => d.Effect == effect);
-            if (data != null)
-            {
-                // Запускаем корутину или Tween для пульсации (здесь упрощенно для примера)
-                StartCoroutine(PulseRoutine(data, intensityMult, duration));
-            }
-        }
+            // _SingularityPulse: reactor-boil flicker for God Singularity mode.
+            float pulse = _isSingularityActive
+                ? Mathf.PingPong(Time.unscaledTime * PulseFrequency, 1f)
+                : 0f;
+            _hydraMaterial.SetFloat("_SingularityPulse", pulse);
 
-        private System.Collections.IEnumerator PulseRoutine(EffectBarData data, float mult, float duration)
-        {
-            data.BasePulseMultiplier = mult;
-            yield return new WaitForSeconds(duration);
-            if (data != null) data.BasePulseMultiplier = 1f;
+            // _SynergyType: 0=None, 1=Wanderer(electric), 2=Darkness(lens), 3=Tax(fire).
+            // Shader uses this int to select the junction effect between dominant segments.
+            _hydraMaterial.SetInt("_SynergyType", (int)_activeSynergy);
         }
     }
 }

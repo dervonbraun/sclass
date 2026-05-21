@@ -9,6 +9,8 @@ public class Projectile : MonoBehaviour
     private float                travelDistance;
     private Vector3              spawnPosition;
     private bool                 isDying;
+    private bool                 _isReflected;
+    private float                _reflectDamageMult = 1f;
 
     private Rigidbody            rb;
     private Renderer             projectileRenderer;
@@ -161,23 +163,45 @@ public class Projectile : MonoBehaviour
         if (weaponSettings == null) return;
 
         float distMult    = weaponSettings.GetDamageMultiplier(travelDistance);
-        float totalDamage = 0f;
+        float totalDamage = weaponSettings.damage * distMult * _reflectDamageMult;
 
+        // ── Projectile reflection (SuperdenseBlackness) ──────────────────────────
+        // Only fire the hook when hitting the player (non-reflected projectile).
+        if (!_isReflected && target.GetComponentInParent<PlayerHealth>() != null)
+        {
+            var ctx = new Sclass.EffectsSystem.ProjectileHitContext
+            {
+                Target = target,
+                Damage = totalDamage,
+            };
+            Sclass.EffectsSystem.GameplayEventBus.ProcessProjectileHit(ctx);
+
+            if (ctx.IsReflected)
+            {
+                // Reverse direction, apply damage multiplier, continue flying
+                _isReflected       = true;
+                _reflectDamageMult = ctx.ReflectDamageMultiplier;
+                rb.linearVelocity  = -rb.linearVelocity;
+                isDying = false;
+                CancelInvoke();
+                return; // don't destroy — projectile is now heading back at enemies
+            }
+        }
+
+        // ── Normal hit ───────────────────────────────────────────────────────────
         if (weaponSettings.splashRadius > 0f)
         {
             Collider[] cols = Physics.OverlapSphere(hitPoint, weaponSettings.splashRadius, projectileSettings.hitLayers);
             foreach (var col in cols)
             {
-                float dist        = Vector3.Distance(hitPoint, col.transform.position);
+                float dist         = Vector3.Distance(hitPoint, col.transform.position);
                 float splashFactor = 1f - Mathf.Clamp01(dist / weaponSettings.splashRadius);
-                float dmg = weaponSettings.damage * splashFactor * distMult;
-                ApplyDamage(col.gameObject, dmg);
-                totalDamage += dmg;
+                ApplyDamage(col.gameObject, weaponSettings.damage * splashFactor * distMult * _reflectDamageMult);
+                totalDamage += weaponSettings.damage * splashFactor * distMult * _reflectDamageMult;
             }
         }
         else
         {
-            totalDamage = weaponSettings.damage * distMult;
             ApplyDamage(target, totalDamage);
         }
 

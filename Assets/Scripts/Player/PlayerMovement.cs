@@ -11,6 +11,26 @@ public class PlayerMovement : MonoBehaviour
     public InputActionReference jumpAction;
     public InputActionReference sprintAction;
 
+    // ── Set by ElementalMutationManager (Kinesia) ──────────────────────────────
+    [HideInInspector] public float SpeedMultiplier           = 1f;
+    [HideInInspector] public bool  JumpBlocked               = false;
+    [HideInInspector] public bool  SprintBlocked             = false;
+
+    // ── Set by SingularityController ────────────────────────────────────────────
+    // When true, SpeedMultiplier (Kinesia) is bypassed so they don't compound
+    [HideInInspector] public bool  SingularityActive          = false;
+    [HideInInspector] public float TimeCompensationMultiplier = 1f;
+    [HideInInspector] public float GravityMultiplier          = 1f;
+
+    // ── Set by SynergyManager effects ───────────────────────────────────────────
+    /// <summary>Multiplies final speed. SuperdenseBlackness sets 0.4 for 60% reduction.</summary>
+    [HideInInspector] public float SynergySpeedMultiplier = 1f;
+    /// <summary>Multiplies deceleration. 0 = pure ice, 1 = normal.</summary>
+    [HideInInspector] public float FrictionMultiplier     = 1f;
+
+    /// <summary>True while the sprint offset is above idle threshold and sprint is not blocked.</summary>
+    public bool IsSprinting => currentSprintOffset > 0.05f && !SprintBlocked;
+
     private CharacterController controller;
     private Vector2 currentInput;
     private Vector3 currentVelocity;
@@ -34,7 +54,9 @@ public class PlayerMovement : MonoBehaviour
     {
         Vector2 targetInput = moveAction != null ? moveAction.action.ReadValue<Vector2>() : Vector2.zero;
 
-        float accelRate = targetInput.sqrMagnitude > 0 ? settings.acceleration : settings.deceleration;
+        float accelRate = targetInput.sqrMagnitude > 0
+            ? settings.acceleration
+            : settings.deceleration * FrictionMultiplier; // 0 = ice (no deceleration)
         if (accelRate > 0)
             currentInput = Vector2.Lerp(currentInput, targetInput, accelRate * Time.deltaTime);
         else
@@ -47,15 +69,24 @@ public class PlayerMovement : MonoBehaviour
             moveDirection.Normalize();
         }
 
-        if (sprintAction != null && sprintAction.action.WasPressedThisFrame())
+        if (!SprintBlocked && sprintAction != null && sprintAction.action.WasPressedThisFrame())
         {
             currentSprintOffset += settings.sprintSpamAdd;
         }
 
-        currentSprintOffset -= settings.sprintSpamDecay * Time.deltaTime;
+        if (SprintBlocked)
+            currentSprintOffset = 0f;
+        else
+            currentSprintOffset -= settings.sprintSpamDecay * Time.deltaTime;
+
         currentSprintOffset = Mathf.Clamp(currentSprintOffset, 0f, settings.sprintSpeed - settings.walkSpeed);
 
-        float targetSpeed = settings.walkSpeed + currentSprintOffset;
+        // Singularity bypasses Kinesia scaling to avoid compounding with time compensation
+        float kinesiaFactor = SingularityActive ? 1f : SpeedMultiplier;
+        float targetSpeed   = (settings.walkSpeed + currentSprintOffset)
+                            * kinesiaFactor
+                            * TimeCompensationMultiplier
+                            * SynergySpeedMultiplier;
 
         currentVelocity = moveDirection * targetSpeed;
 
@@ -66,14 +97,14 @@ public class PlayerMovement : MonoBehaviour
                 verticalVelocity = -2f; 
             }
 
-            if (jumpAction != null && jumpAction.action.WasPressedThisFrame())
+            if (!JumpBlocked && jumpAction != null && jumpAction.action.WasPressedThisFrame())
             {
                 verticalVelocity = Mathf.Sqrt(settings.jumpHeight * -2f * settings.gravity);
             }
         }
         else
         {
-            verticalVelocity += settings.gravity * Time.deltaTime;
+            verticalVelocity += settings.gravity * GravityMultiplier * Time.deltaTime;
         }
 
         Vector3 finalMove = currentVelocity + Vector3.up * verticalVelocity;

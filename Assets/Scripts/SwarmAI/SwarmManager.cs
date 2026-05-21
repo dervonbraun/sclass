@@ -4,6 +4,15 @@ using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
 using TMPro;
+using Sclass.EffectsSystem;
+
+[System.Serializable]
+public struct SwarmMutationEffect
+{
+    public MutationType Type;
+    [Tooltip("Изменение стата в секунду (отрицательное = убыль).")]
+    public float AmountPerSecond;
+}
 
 public class SwarmManager : MonoBehaviour
 {
@@ -57,11 +66,15 @@ public class SwarmManager : MonoBehaviour
     [Tooltip("Дистанция до стены, на которой начинается отталкивание.")]
     public float ObstacleAvoidRadius = 4.0f;
 
-    [Header("Урон и атака")]
-    [Tooltip("Урон в секунду, который рой наносит игроку.")]
-    public float AgentDamagePerSecond = 15f;
-    [Tooltip("Радиус атаки роя. Если игрок внутри, он получает урон.")]
+    [Header("Контакт — Элементарные эффекты")]
+    [Tooltip("Радиус контакта. Если игрок внутри, применяются мутации.")]
     public float AgentAttackRadius = 1.2f;
+    [Tooltip("Эффекты, накладываемые на игрока при контакте с роем. Можно добавить несколько разных типов.")]
+    public SwarmMutationEffect[] MutationEffects = new SwarmMutationEffect[]
+    {
+        new SwarmMutationEffect { Type = MutationType.Kinesia,    AmountPerSecond = -5f },
+        new SwarmMutationEffect { Type = MutationType.Transfinite, AmountPerSecond = -3f }
+    };
 
     [Header("Движение & FSM")]
     [Tooltip("Максимальная скорость в состоянии Swarming.")]

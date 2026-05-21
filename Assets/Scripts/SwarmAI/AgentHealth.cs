@@ -9,6 +9,9 @@ using UnityEngine;
 /// </summary>
 public class AgentHealth : MonoBehaviour, IDamageable
 {
+    /// <summary>Fires on every agent death. SingularityController listens to this for kill restoration.</summary>
+    public static event System.Action OnAgentKilled;
+
     [Header("Настройки")]
     [Tooltip("Максимальное HP агента.")]
     public float MaxHealth = 30f;
@@ -79,6 +82,7 @@ public class AgentHealth : MonoBehaviour, IDamageable
 
         // Сообщаем SwarmManager: пометить агента как Dead в NativeArray
         _swarmManager?.KillAgent(AgentIndex);
+        OnAgentKilled?.Invoke();
     }
 
     private static void SetLayerRecursive(GameObject go, int layer)
