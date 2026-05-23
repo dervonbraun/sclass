@@ -21,9 +21,6 @@ public struct MutationGlowColors
 [RequireComponent(typeof(CharacterController))]
 public class PlayerHealth : MonoBehaviour
 {
-    [Header("Swarm Contact")]
-    public ModifiableStat HitboxRadiusMultiplier = new ModifiableStat(1f);
-
     [Header("UI — Glow Border")]
     [Tooltip("CanvasGroup на объекте с Image — управляет видимостью рамки.")]
     public CanvasGroup GlowBorderGroup;
@@ -55,12 +52,6 @@ public class PlayerHealth : MonoBehaviour
     public DeathScreenManager DeathScreen;
 
     public bool IsDead { get; private set; }
-
-    /// <summary>
-    /// Set by FlickeringWanderer while the player is sprinting.
-    /// Prevents swarm contact from draining mutation stats (invisibility).
-    /// </summary>
-    [HideInInspector] public bool IsInvisible = false;
 
     private Image    _glowImage;
     private Material _gainInstance;
@@ -94,16 +85,6 @@ public class PlayerHealth : MonoBehaviour
             _prevSmallion    = MutationManager.Smallion;
             _prevTransfinite = MutationManager.Transfinite;
             _mutationValuesInitialized = true;
-        }
-
-        if (!IsInvisible && Swarm != null && MutationManager != null)
-        {
-            float actualRadius = Swarm.AgentAttackRadius * HitboxRadiusMultiplier.GetValue();
-            if (Swarm.IsAgentNearPlayer(transform.position, actualRadius))
-            {
-                foreach (var effect in Swarm.MutationEffects)
-                    MutationManager.ModifyStat(effect.Type, effect.AmountPerSecond * Time.deltaTime);
-            }
         }
 
         if (MutationManager != null && _mutationValuesInitialized)

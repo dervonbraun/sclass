@@ -23,11 +23,9 @@ public abstract class WeaponBase : MonoBehaviour
     // Коллайдеры владельца: снаряд будет игнорировать их через Physics.IgnoreCollision
     protected Collider[] ownerColliders = System.Array.Empty<Collider>();
 
-    // ── Set by KineticTax synergy effect ──────────────────────────────────────
-    /// <summary>Multiplies fire rate. KineticTax sets 3× for 200% increase.</summary>
-    [HideInInspector] public float FireRateMultiplier   = 1f;
-    /// <summary>Multiplies reload duration. KineticTax sets 1/3 for 3× faster reload.</summary>
-    [HideInInspector] public float ReloadTimeMultiplier = 1f;
+    // ── Set by ElementalMutationManager (Kinesia) ────────────────────────────
+    /// <summary>Multiplies base spread. Set each frame by ElementalMutationManager.</summary>
+    [HideInInspector] public float SpreadMultiplier = 1f;
 
     // ── Состояние ──────────────────────────────────────────────
     public int  CurrentAmmo   { get; protected set; }
@@ -118,7 +116,7 @@ public abstract class WeaponBase : MonoBehaviour
     {
         if (IsReloading || CurrentAmmo <= 0 || Time.time < nextFireTime) return;
 
-        nextFireTime = Time.time + 60f / (settings.fireRate * FireRateMultiplier);
+        nextFireTime = Time.time + 60f / settings.fireRate;
 
         for (int i = 0; i < settings.pelletsPerShot; i++)
             Shoot();
@@ -155,7 +153,7 @@ public abstract class WeaponBase : MonoBehaviour
     {
         IsReloading = true;
         OnReloadStart?.Invoke();
-        yield return new WaitForSeconds(settings.reloadTime * ReloadTimeMultiplier);
+        yield return new WaitForSeconds(settings.reloadTime);
         CurrentAmmo = settings.magazineSize;
         IsReloading = false;
         OnReloadEnd?.Invoke();

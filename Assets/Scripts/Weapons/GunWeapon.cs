@@ -31,7 +31,7 @@ public class GunWeapon : WeaponBase
 
         Transform origin = muzzlePoint != null ? muzzlePoint : transform;
         Vector3   baseDir = playerCamera != null ? playerCamera.forward : origin.forward;
-        Vector3   shootDir = GetSpreadDirection(baseDir, settings.baseSpread);
+        Vector3   shootDir = GetSpreadDirection(baseDir, settings.baseSpread * SpreadMultiplier);
 
         GameObject projGO = Instantiate(
             settings.projectilePrefab,

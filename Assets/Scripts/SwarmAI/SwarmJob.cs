@@ -212,55 +212,62 @@ public struct SwarmJob : IJobParallelForTransform
         if (sepCount > 0)
             separation /= sepCount;
 
-        // --- 3. Anchor Navigation ---
-        float3 toAnchor = AnchorPositions[agent.AnchorIndex] - position;
+        // --- 3. Anchor Navigation (Orbit Zone) ---
+        float3 toAnchor = AnchorPositions[0] - position;
         float anchorDist = math.length(toAnchor);
-        
-        // Эластичная сила: если агент отходит далеко от якоря, сила притяжения прогрессивно возрастает!
-        float elasticFactor = 1.0f;
-        if (anchorDist > 4.0f)
+
+        // Орбитальная зона: внутри — отталкивание, снаружи — притяжение, в зоне — свобода
+        float minOrbitDist = 4f;
+        float maxOrbitDist = 14f;
+
+        float3 anchorForce;
+        if (anchorDist < minOrbitDist && anchorDist > 0.01f)
         {
-            elasticFactor += (anchorDist - 4.0f) * 0.75f;
+            float t = 1f - (anchorDist / minOrbitDist);
+            anchorForce = -math.normalizesafe(toAnchor) * AnchorWeight * t * 1.5f;
         }
-        
-        // Коэффициент следования: если якорь слишком далеко (>15м), рой плавно перестает за ним следовать и рассеивается
-        float followFactor = 1.0f - math.smoothstep(10.0f, 15.0f, anchorDist);
-        float anchorMag = math.min(anchorDist * 0.4f, AnchorWeight * elasticFactor) * followFactor;
+        else if (anchorDist > maxOrbitDist)
+        {
+            float excess = anchorDist - maxOrbitDist;
+            float elasticFactor = 1f + excess * 0.6f;
+            anchorForce = math.normalizesafe(toAnchor) * AnchorWeight * elasticFactor;
+        }
+        else
+        {
+            anchorForce = float3.zero;
+        }
+
+        float followFactor = 1f - math.smoothstep(maxOrbitDist + 5f, maxOrbitDist + 20f, anchorDist);
+        anchorForce *= followFactor;
 
         float3 localPAnchor = position - FlowFieldOrigin;
         int2 fcAnchor = new int2(
             math.clamp((int)math.floor(localPAnchor.x / FlowFieldCellSize), 0, GridSize.x - 1),
             math.clamp((int)math.floor(localPAnchor.z / FlowFieldCellSize), 0, GridSize.y - 1));
-        
+
         float3 flowDir = FlowField[fcAnchor.x + fcAnchor.y * GridSize.x];
-        float3 navigateDir = math.normalizesafe(toAnchor);
-        
         bool inWallCell = SampleSDF_Distance(position) < 0f;
-        if (math.lengthsq(flowDir) > 0.01f)
+
+        // Применяем flow field только когда тянем обратно в зону
+        if (anchorDist > maxOrbitDist && math.lengthsq(anchorForce) > 0.001f)
         {
-            // Увеличиваем приоритет векторного поля (вес 2.5), чтобы агенты надежно огибали стены!
-            navigateDir = math.normalizesafe(navigateDir * 0.3f + flowDir * 2.5f);
-        }
-        else if (inWallCell)
-        {
-            // Если мы глубоко в стене и векторного поля нет, принудительно рулим к выходу по запеченному градиенту SDF!
-            float3 escapeGrad = SampleSDF_Gradient(position);
-            // Разрешаем вертикальный уход от пола/потолка
-            if (math.lengthsq(escapeGrad) > 0.01f)
+            float3 navigateDir = math.normalizesafe(toAnchor);
+            if (math.lengthsq(flowDir) > 0.01f)
+                navigateDir = math.normalizesafe(navigateDir * 0.3f + flowDir * 2.5f);
+            else if (inWallCell)
             {
-                navigateDir = math.normalizesafe(escapeGrad);
+                float3 escapeGrad = SampleSDF_Gradient(position);
+                if (math.lengthsq(escapeGrad) > 0.01f)
+                    navigateDir = math.normalizesafe(escapeGrad);
             }
-            else
-            {
-                navigateDir = math.normalizesafe(toAnchor);
-            }
+            anchorForce = navigateDir * math.length(anchorForce);
         }
-        float3 anchorForce = navigateDir * anchorMag;
 
         // --- 4. Wander ---
         agent.RandomSeed = agent.RandomSeed * 1664525 + 1013904223;
         float randomWanderChange = ((float)(agent.RandomSeed & 0xFFFF) / 65535f) * 2f - 1f;
-        agent.WanderAngle += randomWanderChange * 8f * DeltaTime;
+        agent.WanderAngle += randomWanderChange * 2.5f * DeltaTime;
+        float3 wanderHorizontal = new float3(math.cos(agent.WanderAngle), 0f, math.sin(agent.WanderAngle));
 
         // --- 5. Отталкивание от геометрии (3D SDF) ---
         float sdfHere = SampleSDF_Distance(position);
@@ -290,15 +297,10 @@ public struct SwarmJob : IJobParallelForTransform
         float verticalWander = math.sin(Time * 0.8f + agent.VerticalOffset * math.PI * 2f) * 1.5f;
         float3 verticalForce = new float3(0, verticalWander, 0);
         
-        // --- 7. Глубинный слой по типу агента ---
+        // --- 7. Притяжение к игроку ---
         float3 toPlayer = PlayerPosition - position;
         float playerDist = math.length(toPlayer);
-        float preferredDist = agent.Type switch {
-            AgentType.Kinesia     => 2.0f,
-            AgentType.Smallion    => 5.0f,
-            AgentType.Transfinite => 9.0f,
-            _                     => 5.0f
-        };
+        float preferredDist = 5.0f;
         
         float3 playerNavigateDir = math.normalizesafe(toPlayer);
         if (math.lengthsq(flowDir) > 0.01f)
@@ -360,7 +362,8 @@ public struct SwarmJob : IJobParallelForTransform
                 + separation  * SeparationWeight
                 + math.normalizesafe(alignment) * AlignmentWeight
                 + math.normalizesafe(cohesion) * CohesionWeight
-                + verticalForce * WanderWeight;
+                + wanderHorizontal * WanderWeight
+                + verticalForce * WanderWeight * 0.5f;
 
             // Слайдинг рулевой силы вдоль стен, чтобы избежать «бодания» с геометрией
             if (sdfHere < ObstacleAvoidRadius && math.lengthsq(wallGradHere) > 0.01f)

@@ -8,14 +8,6 @@ using TMPro;
 using Sclass.EffectsSystem;
 
 [System.Serializable]
-public struct SwarmMutationEffect
-{
-    public MutationType Type;
-    [Tooltip("Изменение стата в секунду (отрицательное = убыль).")]
-    public float AmountPerSecond;
-}
-
-[System.Serializable]
 public struct SwarmPreset
 {
     public float CohesionWeight;
@@ -25,31 +17,25 @@ public struct SwarmPreset
 public class SwarmManager : MonoBehaviour
 {
     [Header("Ссылки")]
-    [Tooltip("Префабы агентов по типам: [0] Kinesia, [1] Smallion, [2] Transfinite.")]
-    public GameObject[] AgentPrefabs = new GameObject[3];
+    public GameObject AgentPrefab;
     public Transform Player;
     public FlowFieldGenerator FlowField;
     public SDFGrid SdfGrid;
     public SwarmAnchorManager AnchorManager;
 
     [Header("UI — Счётчик агентов")]
-    [Tooltip("TMP_Text для отображения числа живых агентов. Назначить в Inspector.")]
     public TMP_Text AgentCountText;
 
     [Header("Настройки Роя")]
     public int SwarmSize = 500;
 
     [Header("Спавн")]
-    [Tooltip("Радиус появления агентов вокруг менеджера.")]
     public float SpawnRadius = 20f;
-    [Tooltip("Слой земли/поверхности.")]
     public LayerMask GroundMask;
 
-    [Header("Boids Weights — CohesionWeight/SeparationWeight управляются пресетами")]
-    [Tooltip("Управляется пресетом во время игры.")]
+    [Header("Boids Weights")]
     public float SeparationWeight = 1.5f;
     public float AlignmentWeight = 1.0f;
-    [Tooltip("Управляется пресетом во время игры.")]
     public float CohesionWeight = 1.0f;
     public float AnchorWeight = 3.0f;
     public float WanderWeight = 1.0f;
@@ -60,22 +46,22 @@ public class SwarmManager : MonoBehaviour
     public float NeighborRadius = 4.0f;
     public float ObstacleAvoidRadius = 4.0f;
 
-    [Header("Контакт — Элементарные эффекты (живые агенты рядом)")]
-    [Tooltip("Радиус контакта. Если игрок внутри, применяются мутации.")]
+    [Header("Контакт")]
     public float AgentAttackRadius = 1.2f;
-    public SwarmMutationEffect[] MutationEffects = new SwarmMutationEffect[]
-    {
-        new SwarmMutationEffect { Type = MutationType.Kinesia,    AmountPerSecond = -5f },
-        new SwarmMutationEffect { Type = MutationType.Transfinite, AmountPerSecond = -3f }
-    };
 
-    [Header("Облака смерти")]
+    [Header("Облака")]
     [Tooltip("Префабы облаков по типам: [0] Kinesia, [1] Smallion, [2] Transfinite.")]
     public GameObject[] CloudPrefabs = new GameObject[3];
-    [Tooltip("Урон в секунду для каждого типа облака (отрицательный = убыль стата).")]
-    public float[] CloudAmountsPerSecond = { -5f, -5f, -3f };
+    [Tooltip("Впитывание стата в секунду для каждого типа облака.")]
+    public float[] CloudAmountsPerSecond = { 10f, 10f, 10f };
     public float CloudLifetime = 8f;
-    public float CloudRadius   = 3f;
+    public float CloudRadius = 3f;
+    [Tooltip("Вероятность [0..1] что живой агент оставит облако за каждый интервал.")]
+    public float CloudSpawnChance = 0.02f;
+    [Tooltip("Как часто проверяем агентов на спавн облака (секунды).")]
+    public float CloudSpawnInterval = 3f;
+    [Tooltip("Максимум облаков в сцене одновременно.")]
+    public int MaxCloudsInScene = 30;
 
     [Header("Движение & FSM")]
     public float MaxSpeed = 5.0f;
@@ -86,24 +72,8 @@ public class SwarmManager : MonoBehaviour
     public float PlayerRadius = 0.5f;
 
     [Header("Динамические Пресеты Роя")]
-    [Tooltip("Рой собирается в кучу.")]
-    public SwarmPreset Gathered = new SwarmPreset
-    {
-        CohesionWeight   = 3.0f,
-        SeparationWeight = 0.5f
-    };
-    [Tooltip("Рой рассредотачивается.")]
-    public SwarmPreset Scattered = new SwarmPreset
-    {
-        CohesionWeight   = 0.2f,
-        SeparationWeight = 2.5f
-    };
-
-    [Header("Трейл облаков (пока рой летит)")]
-    [Tooltip("Как часто каждый тип оставляет облако на позиции своего якоря (секунды).")]
-    public float CloudSpawnInterval = 3f;
-    [Tooltip("Максимум облаков в сцене одновременно.")]
-    public int MaxCloudsInScene = 30;
+    public SwarmPreset Gathered = new SwarmPreset { CohesionWeight = 3.0f, SeparationWeight = 0.5f };
+    public SwarmPreset Scattered = new SwarmPreset { CohesionWeight = 0.2f, SeparationWeight = 2.5f };
 
     private float _cloudSpawnTimer;
     private int _currentCloudCount;
@@ -140,7 +110,6 @@ public class SwarmManager : MonoBehaviour
                 if (Physics.Raycast(rayStart, Vector3.down, out RaycastHit hit, 100f, GroundMask))
                 {
                     Vector3 testPos = hit.point + Vector3.up * 0.1f;
-
                     if (!Physics.CheckSphere(testPos, AgentRadius, FlowField.UnwalkableMask)
                         && NavMesh.SamplePosition(testPos, out NavMeshHit navHit, 2f, NavMesh.AllAreas))
                     {
@@ -152,32 +121,19 @@ public class SwarmManager : MonoBehaviour
             }
 
             if (!pointFound)
-                Debug.LogWarning($"[Swarm] Не смог найти точку для спавна агента. Спавним в центре.");
+                Debug.LogWarning("[Swarm] Не смог найти точку для спавна агента. Спавним в центре.");
 
-            int agentType = i % 3;
-            GameObject prefab = null;
-            for (int t = agentType; t >= 0; t--)
+            if (AgentPrefab == null)
             {
-                if (AgentPrefabs != null && t < AgentPrefabs.Length && AgentPrefabs[t] != null)
-                {
-                    prefab = AgentPrefabs[t];
-                    break;
-                }
-            }
-
-            if (prefab == null)
-            {
-                // Нет префаба — добавляем пустой GO чтобы не сломать индексы TransformAccessArray
                 GameObject dummy = new GameObject($"SwarmAgent_Dummy_{i}");
                 dummy.transform.position = new Vector3(0f, -1000f, 0f);
                 _agents[i] = new AgentData { State = SwarmState.Dead };
                 _transformAccessArray.Add(dummy.transform);
-                Debug.LogError($"[SwarmManager] AgentPrefabs не назначены! Агент {i} — заглушка.");
+                Debug.LogError("[SwarmManager] AgentPrefab не назначен!");
                 continue;
             }
 
-            GameObject inst = Instantiate(prefab, spawnPos, Quaternion.identity);
-
+            GameObject inst = Instantiate(AgentPrefab, spawnPos, Quaternion.identity);
             uint seed = (uint)((i + 1) * 2654435761);
 
             _agents[i] = new AgentData
@@ -189,8 +145,6 @@ public class SwarmManager : MonoBehaviour
                 LateralOffset  = UnityEngine.Random.value * 2f - 1f,
                 VerticalOffset = UnityEngine.Random.value,
                 RandomSeed     = seed,
-                Type        = (AgentType)agentType,
-                AnchorIndex = agentType   // индекс якоря == индекс типа, всегда
             };
 
             _transformAccessArray.Add(inst.transform);
@@ -226,7 +180,7 @@ public class SwarmManager : MonoBehaviour
 
         float amount = (CloudAmountsPerSecond != null && typeIndex < CloudAmountsPerSecond.Length)
             ? CloudAmountsPerSecond[typeIndex]
-            : -5f;
+            : 10f;
 
         cloud.Radius   = CloudRadius;
         cloud.Lifetime = CloudLifetime;
@@ -272,7 +226,6 @@ public class SwarmManager : MonoBehaviour
     private void OnDestroy()
     {
         _swarmHandle.Complete();
-
         if (_agents.IsCreated) _agents.Dispose();
         if (_agentPositions.IsCreated) _agentPositions.Dispose();
         if (_hashMap.IsCreated) _hashMap.Dispose();
@@ -286,7 +239,6 @@ public class SwarmManager : MonoBehaviour
             || AnchorManager == null || !AnchorManager.AnchorPositions.IsCreated)
             return;
 
-        // Динамическая интерполяция пресетов
         _stateTimer += Time.deltaTime;
         if (_stateTimer > _stateDuration)
         {
@@ -302,11 +254,9 @@ public class SwarmManager : MonoBehaviour
 
         _hashMap.Clear();
 
-        // 1. Копируем позиции
         var copyPositionsJob = new CopyPositionsJob { Positions = _agentPositions };
         JobHandle copyHandle = copyPositionsJob.Schedule(_transformAccessArray, default);
 
-        // 2. Хешируем
         var hashJob = new HashPositionsJob
         {
             HashMap  = _hashMap.AsParallelWriter(),
@@ -315,7 +265,6 @@ public class SwarmManager : MonoBehaviour
         };
         JobHandle hashHandle = hashJob.Schedule(_transformAccessArray, copyHandle);
 
-        // 4. Основная джоба
         var swarmJob = new SwarmJob
         {
             Agents          = _agents,
@@ -335,7 +284,7 @@ public class SwarmManager : MonoBehaviour
             FlowFieldCellSize = FlowField.CellSize,
             FlowFieldOrigin   = FlowField.WorldBottomLeft,
             PlayerPosition    = Player.position,
-            DeltaTime         = math.min(Time.deltaTime, 0.033f), // ЗАЩИТА ОТ ПРОЛЁТОВ (макс шаг для 30 FPS)
+            DeltaTime         = math.min(Time.deltaTime, 0.033f),
             Time              = Time.time,
 
             SeparationWeight    = SeparationWeight,
@@ -360,7 +309,7 @@ public class SwarmManager : MonoBehaviour
         };
 
         _swarmHandle = swarmJob.Schedule(_transformAccessArray, hashHandle);
-        _swarmHandle.Complete(); // Ждем только здесь!
+        _swarmHandle.Complete();
 
         TickCloudTrail(Time.deltaTime);
 
@@ -370,20 +319,22 @@ public class SwarmManager : MonoBehaviour
 
     private void TickCloudTrail(float dt)
     {
+        if (CloudPrefabs == null || CloudPrefabs.Length == 0) return;
+
         _cloudSpawnTimer += dt;
         if (_cloudSpawnTimer < CloudSpawnInterval) return;
         _cloudSpawnTimer = 0f;
 
         if (_currentCloudCount >= MaxCloudsInScene) return;
 
-        // Один облако на тип, на позиции якоря — не стакуется в смертельную кучу
-        NativeArray<float3> anchors = AnchorManager.AnchorPositions;
-        for (int typeIndex = 0; typeIndex < 3; typeIndex++)
+        for (int i = 0; i < _agents.Length; i++)
         {
             if (_currentCloudCount >= MaxCloudsInScene) break;
-            if (typeIndex >= anchors.Length) break;
+            if (_agents[i].State == SwarmState.Dead) continue;
+            if (UnityEngine.Random.value > CloudSpawnChance) continue;
 
-            float3 ap = anchors[typeIndex];
+            float3 ap = _agentPositions[i];
+            int typeIndex = UnityEngine.Random.Range(0, CloudPrefabs.Length);
             SpawnCloud(typeIndex, new Vector3(ap.x, ap.y, ap.z));
         }
     }

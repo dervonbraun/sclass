@@ -43,9 +43,10 @@ public class ShotgunWeapon : WeaponBase
 
         for (int i = 0; i < pellets; i++)
         {
+            float scaledCone = coneHalfAngle * SpreadMultiplier;
             Vector3 shotDir = randomPattern
-                ? RandomConeDirection(baseDir, coneHalfAngle)
-                : UniformConeDirection(baseDir, coneHalfAngle, i, pellets);
+                ? RandomConeDirection(baseDir, scaledCone)
+                : UniformConeDirection(baseDir, scaledCone, i, pellets);
 
             SpawnPellet(origin.position, shotDir);
         }

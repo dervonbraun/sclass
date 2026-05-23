@@ -44,7 +44,8 @@ public class AgentCloud : MonoBehaviour
         if (_mutationManager == null || _player == null) return;
 
         if ((_player.position - transform.position).sqrMagnitude <= Radius * Radius)
-            _mutationManager.ModifyStat(_mutationType, _amountPerSecond * Time.deltaTime);
+            _mutationManager.ModifyStat(_mutationType,
+                _amountPerSecond * _mutationManager.SmallionAbsorptionMultiplier * Time.deltaTime);
     }
 
 #if UNITY_EDITOR

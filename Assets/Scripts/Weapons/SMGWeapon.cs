@@ -60,7 +60,7 @@ public class SMGWeapon : WeaponBase
         Vector3   baseDir = playerCamera != null ? playerCamera.forward : origin.forward;
 
         // Суммарный разброс = базовый + нагрев
-        float totalSpread = settings.baseSpread + _currentHeat;
+        float totalSpread = (settings.baseSpread + _currentHeat) * SpreadMultiplier;
         Vector3 shootDir  = GetSpreadDirection(baseDir, totalSpread);
 
         GameObject go = Instantiate(

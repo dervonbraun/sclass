@@ -137,7 +137,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 6891165060998490566}
-  - component: {fileID: 7017418298546647968}
+  - component: {fileID: 2451958488010084596}
   m_Layer: 7
   m_Name: AgentTransfinite
   m_TagString: Untagged
@@ -161,7 +161,7 @@ Transform:
   - {fileID: 9100006190027027115}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &7017418298546647968
+--- !u!114 &2451958488010084596
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -170,8 +170,9 @@ MonoBehaviour:
   m_GameObject: {fileID: 4820411320186206332}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: dd88f79c5a175ea4e959611911369ae2, type: 3}
+  m_Script: {fileID: 11500000, guid: bb8a4280535edd74d9a342b900f0fd18, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::AgentCloud
-  Radius: 3
-  Lifetime: 8
+  m_EditorClassIdentifier: Assembly-CSharp::AgentHealth
+  MaxHealth: 30
+  DeathEffectPrefab: {fileID: 0}
+  AgentIndex: -1

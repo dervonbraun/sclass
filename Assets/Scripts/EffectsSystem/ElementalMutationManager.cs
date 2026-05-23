@@ -8,66 +8,50 @@ namespace Sclass.EffectsSystem
     {
         // ── Elemental Scales ────────────────────────────────────────────────────
         [Header("Mutation Stats")]
-        [SerializeField] private float _kinesia     = 10f;
-        [SerializeField] private float _smallion    = 10f;
-        [SerializeField] private float _transfinite = 10f;
+        [SerializeField] private float _kinesia     = 50f;
+        [SerializeField] private float _smallion    = 50f;
+        [SerializeField] private float _transfinite = 50f;
 
-        private const float MinStat              = 0f;
-        private const float MaxStat              = 100f;
-        private const float NormBase             = 10f;
-        private const float KinesiaSeizureThreshold = 5f;
-        private const float BurnCoefficient      = 0.1f;
+        private const float MinStat         = 0f;
+        private const float MaxStat         = 100f;
+        private const float Neutral         = 50f;
+        private const float BurnCoefficient = 0.1f;
 
         // ── Dependencies ────────────────────────────────────────────────────────
         [Header("Dependencies")]
         [SerializeField] private PlayerHealth   _playerHealth;
         [SerializeField] private PlayerMovement _playerMovement;
-        [SerializeField] private Camera         _camera;
+        [SerializeField] private WeaponHolder   _weaponHolder;
 
-        [Header("Smallion Lerp Speeds")]
-        [SerializeField] private float _scaleLerpSpeed = 5f;
-        [SerializeField] private float _fovLerpSpeed   = 5f;
-
-        // Captured at Awake — ground truth at Smallion == 10
-        private Vector3 _baseScale;
-        private float   _baseFov;
-        private bool    _isDead;
+        private bool _isDead;
 
         // ── UI Event ────────────────────────────────────────────────────────────
-        public static readonly Color KinesiaColor    = new Color(0.20f, 0.90f, 0.20f);
-        public static readonly Color SmallionColor   = new Color(0.20f, 0.50f, 1.00f);
+        public static readonly Color KinesiaColor     = new Color(0.20f, 0.90f, 0.20f);
+        public static readonly Color SmallionColor    = new Color(0.20f, 0.50f, 1.00f);
         public static readonly Color TransfiniteColor = new Color(1.00f, 0.20f, 0.20f);
 
         public static event Action<MutationUIData> OnUIUpdate;
 
-        // ── Read-only accessors for zones / UI ──────────────────────────────────
+        // ── Read-only accessors ──────────────────────────────────────────────────
         public float Kinesia     => _kinesia;
         public float Smallion    => _smallion;
         public float Transfinite => _transfinite;
 
+        // Smallion: BaseRate * (Smallion / 50)
+        public float SmallionAbsorptionMultiplier => _smallion / Neutral;
+
+        // Kinesia: BaseAccuracy * (50 / Kinesia) — high Kinesia = lower spread
+        public float KinesiaSpreadMultiplier => _kinesia > 0f ? Neutral / _kinesia : float.MaxValue;
+
+        // Transfinite economy
+        public float TransfiniteIncomeMultiplier   => _transfinite > 0f ? Neutral / _transfinite : float.MaxValue;
+        public float TransfiniteEffectMultiplier   => _transfinite / Neutral;
+        public float TransfiniteDurationMultiplier => _transfinite > 0f ? Neutral / _transfinite : float.MaxValue;
+
         // ── Lifecycle ───────────────────────────────────────────────────────────
         private void Awake()
         {
-            _baseScale = transform.localScale;
-
-            if (_camera == null)
-            {
-                _camera = GetComponentInChildren<Camera>(true);
-                if (_camera == null) _camera = Camera.main;
-            }
-
-            if (_camera != null)
-                _baseFov = _camera.fieldOfView;
-        }
-
-        private void OnEnable()
-        {
-            GameplayEventBus.OnDamageProcessing += ApplyTransfiniteModifier;
-        }
-
-        private void OnDisable()
-        {
-            GameplayEventBus.OnDamageProcessing -= ApplyTransfiniteModifier;
+            _kinesia = _smallion = _transfinite = Neutral;
         }
 
         private void Update()
@@ -75,7 +59,6 @@ namespace Sclass.EffectsSystem
             if (_isDead) return;
 
             ApplyKinesiaEffects();
-            ApplySmallionEffects();
             ApplyBurn(Time.deltaTime);
             CheckForDeath();
             BroadcastUIData();
@@ -98,43 +81,14 @@ namespace Sclass.EffectsSystem
             }
         }
 
-        // ── Kinesia → Speed & Seizure ───────────────────────────────────────────
+        // ── Kinesia → Speed & Spread ─────────────────────────────────────────────
         private void ApplyKinesiaEffects()
         {
-            if (_playerMovement == null) return;
+            if (_playerMovement != null)
+                _playerMovement.SpeedMultiplier = _kinesia / Neutral;
 
-            _playerMovement.SpeedMultiplier = _kinesia / NormBase;
-
-            bool seized = _kinesia < KinesiaSeizureThreshold;
-            _playerMovement.JumpBlocked   = seized;
-            _playerMovement.SprintBlocked = seized;
-        }
-
-        // ── Smallion → Scale & FOV ──────────────────────────────────────────────
-        private void ApplySmallionEffects()
-        {
-            // Guard: avoid div-by-zero; death will fire anyway if smallion == 0
-            if (_smallion <= 0f) return;
-
-            float t = Time.deltaTime;
-
-            // Bigger Smallion → smaller physical presence
-            Vector3 targetScale = _baseScale * (NormBase / _smallion);
-            transform.localScale = Vector3.Lerp(transform.localScale, targetScale, _scaleLerpSpeed * t);
-
-            if (_camera != null)
-            {
-                float targetFov = _baseFov * (_smallion / NormBase);
-                _camera.fieldOfView = Mathf.Lerp(_camera.fieldOfView, targetFov, _fovLerpSpeed * t);
-            }
-        }
-
-        // ── Transfinite → Damage Resistance (via GameplayEventBus) ──────────────
-        private void ApplyTransfiniteModifier(DamageContext context)
-        {
-            if (_transfinite <= 0f) return;
-            // At 10 → multiplier 1×, at 50 → 0.2×, at 2 → 5×
-            context.FinalDamage = context.RawDamage * (NormBase / _transfinite);
+            if (_weaponHolder != null && _weaponHolder.ActiveWeapon != null)
+                _weaponHolder.ActiveWeapon.SpreadMultiplier = KinesiaSpreadMultiplier;
         }
 
         // ── Death Check ─────────────────────────────────────────────────────────
@@ -147,29 +101,29 @@ namespace Sclass.EffectsSystem
             }
         }
 
-        // Burn mechanic: scales above 50 reduce other two scales proportionally
+        // ── Burn: scales above 50 drain the other two ────────────────────────────
         private void ApplyBurn(float dt)
         {
-            // Compute burn for each scale if above neutral (50)
-            if (_kinesia > 50f)
+            if (_kinesia > Neutral)
             {
-                float burn = (_kinesia - 50f) * BurnCoefficient * dt;
-                _smallion = Mathf.Max(MinStat, _smallion - burn);
+                float burn = (_kinesia - Neutral) * BurnCoefficient * dt;
+                _smallion    = Mathf.Max(MinStat, _smallion    - burn);
                 _transfinite = Mathf.Max(MinStat, _transfinite - burn);
             }
-            if (_smallion > 50f)
+            if (_smallion > Neutral)
             {
-                float burn = (_smallion - 50f) * BurnCoefficient * dt;
-                _kinesia = Mathf.Max(MinStat, _kinesia - burn);
+                float burn = (_smallion - Neutral) * BurnCoefficient * dt;
+                _kinesia     = Mathf.Max(MinStat, _kinesia     - burn);
                 _transfinite = Mathf.Max(MinStat, _transfinite - burn);
             }
-            if (_transfinite > 50f)
+            if (_transfinite > Neutral)
             {
-                float burn = (_transfinite - 50f) * BurnCoefficient * dt;
-                _kinesia = Mathf.Max(MinStat, _kinesia - burn);
+                float burn = (_transfinite - Neutral) * BurnCoefficient * dt;
+                _kinesia  = Mathf.Max(MinStat, _kinesia  - burn);
                 _smallion = Mathf.Max(MinStat, _smallion - burn);
             }
         }
+
         // ── UI Broadcast ────────────────────────────────────────────────────────
         private void BroadcastUIData()
         {
@@ -178,12 +132,12 @@ namespace Sclass.EffectsSystem
 
             OnUIUpdate?.Invoke(new MutationUIData
             {
-                KinesiaRatio      = _kinesia     / total,
-                SmallionRatio     = _smallion    / total,
-                TransfiniteRatio  = _transfinite / total,
-                KinesiaColor      = KinesiaColor,
-                SmallionColor     = SmallionColor,
-                TransfiniteColor  = TransfiniteColor,
+                KinesiaRatio     = _kinesia     / total,
+                SmallionRatio    = _smallion    / total,
+                TransfiniteRatio = _transfinite / total,
+                KinesiaColor     = KinesiaColor,
+                SmallionColor    = SmallionColor,
+                TransfiniteColor = TransfiniteColor,
             });
         }
 

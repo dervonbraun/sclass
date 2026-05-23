@@ -23,7 +23,7 @@ namespace Sclass.EffectsSystem
         private void OnTriggerStay(Collider other)
         {
             if (_target != null)
-                _target.ModifyStat(_type, _ratePerSecond * Time.deltaTime);
+                _target.ModifyStat(_type, _ratePerSecond * _target.SmallionAbsorptionMultiplier * Time.deltaTime);
         }
 
         private void OnTriggerExit(Collider other)
