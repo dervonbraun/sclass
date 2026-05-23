@@ -29,6 +29,9 @@ public class FlowFieldGenerator : MonoBehaviour
     // Очередь для BFS. Переиспользуется, чтобы не было GC.Alloc.
     private Queue<int2> _cellsToCheck;
 
+    private Vector3 _lastTargetPos;
+    private float _updateTimer;
+
     public float3 WorldBottomLeft => (float3)transform.position - new float3(GridWorldSize.x / 2, 0, GridWorldSize.y / 2);
 
     private void Awake()
@@ -66,7 +69,8 @@ public class FlowFieldGenerator : MonoBehaviour
                 // Маленький бокс — помечаем как стену ТОЛЬКО ячейки, центр которых реально внутри стены.
                 // Физическая коллизия теперь через SDF, а не через AABB ячеек.
                 Vector3 boxCenter = (Vector3)worldPoint + new Vector3(0, 1.5f, 0);
-                Vector3 halfExtents = new Vector3(CellRadius * 0.5f, 2.0f, CellRadius * 0.5f);
+                // Используем полный CellRadius для исключения щелей между ячейками и гарантированного улавливания стен!
+                Vector3 halfExtents = new Vector3(CellRadius, 2.0f, CellRadius);
                 
                 bool isObstacle = Physics.CheckBox(boxCenter, halfExtents, Quaternion.identity, UnwalkableMask);
                 
@@ -77,8 +81,15 @@ public class FlowFieldGenerator : MonoBehaviour
 
     private void Update()
     {
-        if (Target != null)
+        if (Target == null) return;
+
+        _updateTimer += Time.deltaTime;
+        // Обновляем, если игрок сдвинулся больше чем на полметра ИЛИ прошло 0.2 секунды
+        if (Vector3.SqrMagnitude(Target.position - _lastTargetPos) > 0.25f || _updateTimer > 0.2f)
         {
+            _lastTargetPos = Target.position;
+            _updateTimer = 0f;
+            
             GenerateIntegrationField();
             GenerateFlowField();
         }

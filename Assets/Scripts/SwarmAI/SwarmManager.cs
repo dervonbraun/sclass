@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.AI;
 using UnityEngine.Jobs;
 using Unity.Collections;
 using Unity.Jobs;
@@ -19,17 +20,17 @@ public struct SwarmPreset
 {
     public float CohesionWeight;
     public float SeparationWeight;
-    public float LateralSpreadWeight;
-    public float FlowFieldWeight;
 }
 
 public class SwarmManager : MonoBehaviour
 {
     [Header("Ссылки")]
-    public GameObject AgentPrefab;
+    [Tooltip("Префабы агентов по типам: [0] Kinesia, [1] Smallion, [2] Transfinite.")]
+    public GameObject[] AgentPrefabs = new GameObject[3];
     public Transform Player;
     public FlowFieldGenerator FlowField;
     public SDFGrid SdfGrid;
+    public SwarmAnchorManager AnchorManager;
 
     [Header("UI — Счётчик агентов")]
     [Tooltip("TMP_Text для отображения числа живых агентов. Назначить в Inspector.")]
@@ -38,47 +39,43 @@ public class SwarmManager : MonoBehaviour
     [Header("Настройки Роя")]
     public int SwarmSize = 500;
 
-    [Header("Спавн (Появление)")]
+    [Header("Спавн")]
     [Tooltip("Радиус появления агентов вокруг менеджера.")]
     public float SpawnRadius = 20f;
-    [Tooltip("Слой земли/поверхности. Агенты появятся только если под ними есть поверхность этого слоя.")]
+    [Tooltip("Слой земли/поверхности.")]
     public LayerMask GroundMask;
 
-    [Header("Boids Weights (Тюнинг сил) — CohesionWeight/SeparationWeight/LateralSpreadWeight/FlowFieldWeight управляются пресетами")]
-    [Tooltip("Вес отталкивания от соседей. Управляется пресетом во время игры.")]
+    [Header("Boids Weights — CohesionWeight/SeparationWeight управляются пресетами")]
+    [Tooltip("Управляется пресетом во время игры.")]
     public float SeparationWeight = 1.5f;
-    [Tooltip("Вес выравнивания вектора скорости с соседями.")]
     public float AlignmentWeight = 1.0f;
-    [Tooltip("Вес стремления к центру группы. Управляется пресетом во время игры.")]
+    [Tooltip("Управляется пресетом во время игры.")]
     public float CohesionWeight = 1.0f;
-    [Tooltip("Доминирующая сила течения к игроку. Управляется пресетом во время игры.")]
-    public float FlowFieldWeight = 3.0f;
-    [Tooltip("Сила случайного блуждания.")]
+    public float AnchorWeight = 3.0f;
     public float WanderWeight = 1.0f;
-    [Tooltip("Сила отталкивания от стен через 3D SDF.")]
     public float ObstacleAvoidWeight = 5.0f;
-
-    [Header("Жидкостная Модель (Fluid)")]
-    public float PressureWeight = 2.0f;
-    [Tooltip("Боковое растекание. Управляется пресетом во время игры.")]
-    public float LateralSpreadWeight = 1.5f;
-    public float ViscosityWeight = 0.3f;
-    public float TargetDensity = 3.0f;
 
     [Header("Радиусы Boids")]
     public float SeparationRadius = 1.5f;
     public float NeighborRadius = 4.0f;
     public float ObstacleAvoidRadius = 4.0f;
 
-    [Header("Контакт — Элементарные эффекты")]
+    [Header("Контакт — Элементарные эффекты (живые агенты рядом)")]
     [Tooltip("Радиус контакта. Если игрок внутри, применяются мутации.")]
     public float AgentAttackRadius = 1.2f;
-    [Tooltip("Эффекты, накладываемые на игрока при контакте с роем.")]
     public SwarmMutationEffect[] MutationEffects = new SwarmMutationEffect[]
     {
         new SwarmMutationEffect { Type = MutationType.Kinesia,    AmountPerSecond = -5f },
         new SwarmMutationEffect { Type = MutationType.Transfinite, AmountPerSecond = -3f }
     };
+
+    [Header("Облака смерти")]
+    [Tooltip("Префабы облаков по типам: [0] Kinesia, [1] Smallion, [2] Transfinite.")]
+    public GameObject[] CloudPrefabs = new GameObject[3];
+    [Tooltip("Урон в секунду для каждого типа облака (отрицательный = убыль стата).")]
+    public float[] CloudAmountsPerSecond = { -5f, -5f, -3f };
+    public float CloudLifetime = 8f;
+    public float CloudRadius   = 3f;
 
     [Header("Движение & FSM")]
     public float MaxSpeed = 5.0f;
@@ -89,36 +86,38 @@ public class SwarmManager : MonoBehaviour
     public float PlayerRadius = 0.5f;
 
     [Header("Динамические Пресеты Роя")]
-    [Tooltip("Рой собирается в кучу — высокое сцепление, слабое разделение.")]
+    [Tooltip("Рой собирается в кучу.")]
     public SwarmPreset Gathered = new SwarmPreset
     {
-        CohesionWeight    = 3.0f,
-        SeparationWeight  = 0.5f,
-        LateralSpreadWeight = 0.3f,
-        FlowFieldWeight   = 4.0f
+        CohesionWeight   = 3.0f,
+        SeparationWeight = 0.5f
     };
-    [Tooltip("Рой рассредотачивается — слабое сцепление, сильное разделение.")]
+    [Tooltip("Рой рассредотачивается.")]
     public SwarmPreset Scattered = new SwarmPreset
     {
-        CohesionWeight    = 0.2f,
-        SeparationWeight  = 2.5f,
-        LateralSpreadWeight = 2.0f,
-        FlowFieldWeight   = 1.5f
+        CohesionWeight   = 0.2f,
+        SeparationWeight = 2.5f
     };
 
-    // Native Collections для Джоб
+    [Header("Трейл облаков (пока рой летит)")]
+    [Tooltip("Как часто каждый тип оставляет облако на позиции своего якоря (секунды).")]
+    public float CloudSpawnInterval = 3f;
+    [Tooltip("Максимум облаков в сцене одновременно.")]
+    public int MaxCloudsInScene = 30;
+
+    private float _cloudSpawnTimer;
+    private int _currentCloudCount;
+
     private NativeArray<AgentData> _agents;
     private NativeArray<float3> _agentPositions;
     private TransformAccessArray _transformAccessArray;
     private NativeParallelMultiHashMap<int, int> _hashMap;
     private JobHandle _swarmHandle;
 
-    // Состояние динамического пресета
     private float _stateTimer;
     private float _stateDuration = 8f;
     private bool _isGathered = true;
 
-    /// <summary>Количество живых агентов (не Dead). Обновляется каждый кадр.</summary>
     public int AliveCount { get; private set; }
 
     private void Start()
@@ -140,12 +139,12 @@ public class SwarmManager : MonoBehaviour
 
                 if (Physics.Raycast(rayStart, Vector3.down, out RaycastHit hit, 100f, GroundMask))
                 {
-                    Vector3 testPos = hit.point;
-                    testPos.y = transform.position.y;
+                    Vector3 testPos = hit.point + Vector3.up * 0.1f;
 
-                    if (!Physics.CheckSphere(testPos, WallDistance, FlowField.UnwalkableMask))
+                    if (!Physics.CheckSphere(testPos, AgentRadius, FlowField.UnwalkableMask)
+                        && NavMesh.SamplePosition(testPos, out NavMeshHit navHit, 2f, NavMesh.AllAreas))
                     {
-                        spawnPos = testPos;
+                        spawnPos = navHit.position;
                         pointFound = true;
                         break;
                     }
@@ -153,25 +152,45 @@ public class SwarmManager : MonoBehaviour
             }
 
             if (!pointFound)
+                Debug.LogWarning($"[Swarm] Не смог найти точку для спавна агента. Спавним в центре.");
+
+            int agentType = i % 3;
+            GameObject prefab = null;
+            for (int t = agentType; t >= 0; t--)
             {
-                Debug.LogWarning($"[Swarm] Не смог найти точку для спавна агента на слое GroundMask. Спавним в центре.");
+                if (AgentPrefabs != null && t < AgentPrefabs.Length && AgentPrefabs[t] != null)
+                {
+                    prefab = AgentPrefabs[t];
+                    break;
+                }
             }
 
-            GameObject inst = Instantiate(AgentPrefab, spawnPos, Quaternion.identity);
+            if (prefab == null)
+            {
+                // Нет префаба — добавляем пустой GO чтобы не сломать индексы TransformAccessArray
+                GameObject dummy = new GameObject($"SwarmAgent_Dummy_{i}");
+                dummy.transform.position = new Vector3(0f, -1000f, 0f);
+                _agents[i] = new AgentData { State = SwarmState.Dead };
+                _transformAccessArray.Add(dummy.transform);
+                Debug.LogError($"[SwarmManager] AgentPrefabs не назначены! Агент {i} — заглушка.");
+                continue;
+            }
+
+            GameObject inst = Instantiate(prefab, spawnPos, Quaternion.identity);
 
             uint seed = (uint)((i + 1) * 2654435761);
-            float lateralOffset = (UnityEngine.Random.value * 2f - 1f);
 
             _agents[i] = new AgentData
             {
-                Velocity      = float3.zero,
-                State         = SwarmState.Swarming,
-                StateTimer    = 0,
-                WanderAngle   = UnityEngine.Random.Range(0f, math.PI * 2f),
-                LateralOffset = lateralOffset,
+                Velocity       = float3.zero,
+                State          = SwarmState.Swarming,
+                StateTimer     = 0,
+                WanderAngle    = UnityEngine.Random.Range(0f, math.PI * 2f),
+                LateralOffset  = UnityEngine.Random.value * 2f - 1f,
                 VerticalOffset = UnityEngine.Random.value,
-                RandomSeed    = seed,
-                Type          = (AgentType)(i % 3)
+                RandomSeed     = seed,
+                Type        = (AgentType)agentType,
+                AnchorIndex = agentType   // индекс якоря == индекс типа, всегда
             };
 
             _transformAccessArray.Add(inst.transform);
@@ -183,7 +202,7 @@ public class SwarmManager : MonoBehaviour
         AliveCount = SwarmSize;
     }
 
-    public void KillAgent(int index)
+    public void KillAgent(int index, Vector3 deathPosition)
     {
         if (!_agents.IsCreated || index < 0 || index >= _agents.Length) return;
 
@@ -193,6 +212,35 @@ public class SwarmManager : MonoBehaviour
         data.State = SwarmState.Dead;
         _agents[index] = data;
         AliveCount = Mathf.Max(0, AliveCount - 1);
+    }
+
+    private void SpawnCloud(int typeIndex, Vector3 position)
+    {
+        if (CloudPrefabs == null || typeIndex >= CloudPrefabs.Length) return;
+        GameObject cloudPrefab = CloudPrefabs[typeIndex];
+        if (cloudPrefab == null) return;
+
+        GameObject cloudGO = Instantiate(cloudPrefab, position, Quaternion.identity);
+        AgentCloud cloud = cloudGO.GetComponent<AgentCloud>();
+        if (cloud == null) return;
+
+        float amount = (CloudAmountsPerSecond != null && typeIndex < CloudAmountsPerSecond.Length)
+            ? CloudAmountsPerSecond[typeIndex]
+            : -5f;
+
+        cloud.Radius   = CloudRadius;
+        cloud.Lifetime = CloudLifetime;
+
+        MutationType mutationType = typeIndex switch
+        {
+            0 => MutationType.Kinesia,
+            1 => MutationType.Smallion,
+            2 => MutationType.Transfinite,
+            _ => MutationType.Kinesia
+        };
+
+        _currentCloudCount++;
+        cloud.Init(Player, mutationType, amount, () => _currentCloudCount--);
     }
 
     public bool IsAgentNearPlayer(Vector3 center, float radius)
@@ -212,11 +260,13 @@ public class SwarmManager : MonoBehaviour
 
     private void OnGUI()
     {
+#if UNITY_EDITOR
         if (AgentCountText == null)
         {
             GUI.contentColor = Color.yellow;
             GUI.Label(new Rect(20, 55, 300, 30), $"Агентов: {AliveCount} / {SwarmSize}");
         }
+#endif
     }
 
     private void OnDestroy()
@@ -232,7 +282,8 @@ public class SwarmManager : MonoBehaviour
     private void Update()
     {
         if (FlowField == null || !FlowField.FlowField.IsCreated || Player == null
-            || SdfGrid == null || !SdfGrid.Gradient3D.IsCreated)
+            || SdfGrid == null || !SdfGrid.Gradient3D.IsCreated
+            || AnchorManager == null || !AnchorManager.AnchorPositions.IsCreated)
             return;
 
         // Динамическая интерполяция пресетов
@@ -246,22 +297,16 @@ public class SwarmManager : MonoBehaviour
         float presetT = _stateTimer / _stateDuration;
         SwarmPreset fromPreset = _isGathered ? Gathered : Scattered;
         SwarmPreset toPreset   = _isGathered ? Scattered : Gathered;
-        CohesionWeight      = Mathf.Lerp(fromPreset.CohesionWeight,      toPreset.CohesionWeight,      presetT);
-        SeparationWeight    = Mathf.Lerp(fromPreset.SeparationWeight,    toPreset.SeparationWeight,    presetT);
-        LateralSpreadWeight = Mathf.Lerp(fromPreset.LateralSpreadWeight, toPreset.LateralSpreadWeight, presetT);
-        FlowFieldWeight     = Mathf.Lerp(fromPreset.FlowFieldWeight,     toPreset.FlowFieldWeight,     presetT);
+        CohesionWeight   = Mathf.Lerp(fromPreset.CohesionWeight,   toPreset.CohesionWeight,   presetT);
+        SeparationWeight = Mathf.Lerp(fromPreset.SeparationWeight, toPreset.SeparationWeight, presetT);
 
-        // 1. Очищаем хэш-сетку на каждый кадр
         _hashMap.Clear();
 
-        // 2. Джоба копирования позиций
-        var copyPositionsJob = new CopyPositionsJob
-        {
-            Positions = _agentPositions
-        };
-        JobHandle copyHandle = copyPositionsJob.Schedule(_transformAccessArray);
+        // 1. Копируем позиции
+        var copyPositionsJob = new CopyPositionsJob { Positions = _agentPositions };
+        JobHandle copyHandle = copyPositionsJob.Schedule(_transformAccessArray, default);
 
-        // 3. Джоба заполнения Spatial Hash Grid
+        // 2. Хешируем
         var hashJob = new HashPositionsJob
         {
             HashMap  = _hashMap.AsParallelWriter(),
@@ -270,14 +315,15 @@ public class SwarmManager : MonoBehaviour
         };
         JobHandle hashHandle = hashJob.Schedule(_transformAccessArray, copyHandle);
 
-        // 4. Основная джоба физики роя и FSM
+        // 4. Основная джоба
         var swarmJob = new SwarmJob
         {
-            Agents = _agents,
-            FlowField = FlowField.FlowField,
-            CostField = FlowField.CostField,
-            HashMap = _hashMap,
-            AgentPositions = _agentPositions,
+            Agents          = _agents,
+            CostField       = FlowField.CostField,
+            FlowField       = FlowField.FlowField,
+            HashMap         = _hashMap,
+            AgentPositions  = _agentPositions,
+            AnchorPositions = AnchorManager.AnchorPositions,
 
             SDF_Gradient3D = SdfGrid.Gradient3D,
             SDF_Distance3D = SdfGrid.Distance3D,
@@ -285,48 +331,60 @@ public class SwarmManager : MonoBehaviour
             SDFGridSize    = SdfGrid.GridSize,
             SDFCellSize    = SdfGrid.CellSize,
 
-            GridSize = FlowField.GridSize,
+            GridSize          = FlowField.GridSize,
             FlowFieldCellSize = FlowField.CellSize,
-            FlowFieldOrigin = FlowField.WorldBottomLeft,
-            PlayerPosition = Player.position,
-            DeltaTime = Time.deltaTime,
-            Time = Time.time,
+            FlowFieldOrigin   = FlowField.WorldBottomLeft,
+            PlayerPosition    = Player.position,
+            DeltaTime         = math.min(Time.deltaTime, 0.033f), // ЗАЩИТА ОТ ПРОЛЁТОВ (макс шаг для 30 FPS)
+            Time              = Time.time,
 
-            SeparationWeight = SeparationWeight,
-            AlignmentWeight = AlignmentWeight,
-            CohesionWeight = CohesionWeight,
-            FlowFieldWeight = FlowFieldWeight,
-            WanderWeight = WanderWeight,
+            SeparationWeight    = SeparationWeight,
+            AlignmentWeight     = AlignmentWeight,
+            CohesionWeight      = CohesionWeight,
+            AnchorWeight        = AnchorWeight,
+            WanderWeight        = WanderWeight,
             ObstacleAvoidWeight = ObstacleAvoidWeight,
 
-            PressureWeight = PressureWeight,
-            LateralSpreadWeight = LateralSpreadWeight,
-            ViscosityWeight = ViscosityWeight,
-
-            SeparationRadius = SeparationRadius,
-            NeighborRadius = NeighborRadius,
+            SeparationRadius    = SeparationRadius,
+            NeighborRadius      = NeighborRadius,
             ObstacleAvoidRadius = ObstacleAvoidRadius,
 
-            MaxSpeed = MaxSpeed,
+            MaxSpeed        = MaxSpeed,
             ChargeSpeedMult = ChargeSpeedMult,
-            ChargeRadius = ChargeRadius,
-            PlayerRadius = PlayerRadius,
+            ChargeRadius    = ChargeRadius,
+            PlayerRadius    = PlayerRadius,
 
             HashCellSize = NeighborRadius,
-            TargetDensity = TargetDensity,
-            AgentRadius = AgentRadius,
+            AgentRadius  = AgentRadius,
             WallDistance = WallDistance
         };
 
         _swarmHandle = swarmJob.Schedule(_transformAccessArray, hashHandle);
-        _swarmHandle.Complete();
+        _swarmHandle.Complete(); // Ждем только здесь!
 
-        int alive = 0;
-        for (int i = 0; i < _agents.Length; i++)
-            if (_agents[i].State != SwarmState.Dead) alive++;
-        AliveCount = alive;
+        TickCloudTrail(Time.deltaTime);
 
         if (AgentCountText != null)
             AgentCountText.text = AliveCount.ToString();
+    }
+
+    private void TickCloudTrail(float dt)
+    {
+        _cloudSpawnTimer += dt;
+        if (_cloudSpawnTimer < CloudSpawnInterval) return;
+        _cloudSpawnTimer = 0f;
+
+        if (_currentCloudCount >= MaxCloudsInScene) return;
+
+        // Один облако на тип, на позиции якоря — не стакуется в смертельную кучу
+        NativeArray<float3> anchors = AnchorManager.AnchorPositions;
+        for (int typeIndex = 0; typeIndex < 3; typeIndex++)
+        {
+            if (_currentCloudCount >= MaxCloudsInScene) break;
+            if (typeIndex >= anchors.Length) break;
+
+            float3 ap = anchors[typeIndex];
+            SpawnCloud(typeIndex, new Vector3(ap.x, ap.y, ap.z));
+        }
     }
 }

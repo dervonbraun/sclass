@@ -1,6 +1,5 @@
 using Unity.Burst;
 using Unity.Collections;
-using Unity.Collections.LowLevel.Unsafe;
 using Unity.Mathematics;
 using UnityEngine.Jobs;
 
@@ -25,7 +24,6 @@ public struct HashPositionsJob : IJobParallelForTransform
 
     public void Execute(int index, TransformAccess transform)
     {
-        // Мёртвые агенты не добавляем в хэш — живые не будут видеть их и реагировать
         if (Agents[index].State == SwarmState.Dead) return;
 
         int3 cell = math.int3(math.floor(transform.position / CellSize));
@@ -34,15 +32,17 @@ public struct HashPositionsJob : IJobParallelForTransform
     }
 }
 
-// Джоба 3: Основная физика роя — модель «жидкости» (SPH-inspired) + 3D SDF-коллизии
+
+// Джоба 4: Основная физика роя — Boids + 3D SDF-коллизии + Anchor navigation
 [BurstCompile]
 public struct SwarmJob : IJobParallelForTransform
 {
     [NativeDisableParallelForRestriction] public NativeArray<AgentData> Agents;
-    [ReadOnly] public NativeArray<float3> FlowField;
     [ReadOnly] public NativeArray<byte> CostField;
+    [ReadOnly] public NativeArray<float3> FlowField;
     [ReadOnly] public NativeParallelMultiHashMap<int, int> HashMap;
     [ReadOnly] public NativeArray<float3> AgentPositions;
+    [ReadOnly] public NativeArray<float3> AnchorPositions;
 
     // 3D SDF Grid
     [ReadOnly] public NativeArray<float3> SDF_Gradient3D;
@@ -63,14 +63,9 @@ public struct SwarmJob : IJobParallelForTransform
     public float SeparationWeight;
     public float AlignmentWeight;
     public float CohesionWeight;
-    public float FlowFieldWeight;
+    public float AnchorWeight;
     public float WanderWeight;
     public float ObstacleAvoidWeight;
-
-    // --- Fluid-specific weights ---
-    public float PressureWeight;
-    public float LateralSpreadWeight;
-    public float ViscosityWeight;
 
     // Radii
     public float SeparationRadius;
@@ -84,7 +79,6 @@ public struct SwarmJob : IJobParallelForTransform
     public float PlayerRadius;
 
     public float HashCellSize;
-    public float TargetDensity;
     public float AgentRadius;
     public float WallDistance;
 
@@ -97,8 +91,33 @@ public struct SwarmJob : IJobParallelForTransform
         return x + y * SDFGridSize.x + z * SDFGridSize.x * SDFGridSize.y;
     }
 
-    private float3 SampleSDF_Gradient(float3 worldPos) => SDF_Gradient3D[SDF_GetIndex(worldPos)];
-    private float SampleSDF_Distance(float3 worldPos) => SDF_Distance3D[SDF_GetIndex(worldPos)];
+    private bool SDF_OutOfBounds(float3 worldPos)
+    {
+        float3 local = worldPos - SDFOrigin;
+        float3 size = new float3(SDFGridSize.x * SDFCellSize, SDFGridSize.y * SDFCellSize, SDFGridSize.z * SDFCellSize);
+        return local.x < 0.01f || local.x >= size.x - 0.01f || local.y < 0.01f || local.y >= size.y - 0.01f || local.z < 0.01f || local.z >= size.z - 0.01f;
+    }
+
+    private float3 SampleSDF_Gradient(float3 worldPos)
+    {
+        if (SDF_OutOfBounds(worldPos))
+        {
+            // Генерируем нормаль, направленную обратно к центру сетки SDF, чтобы вытолкнуть агента!
+            float3 size = new float3(SDFGridSize.x * SDFCellSize, SDFGridSize.y * SDFCellSize, SDFGridSize.z * SDFCellSize);
+            float3 center = SDFOrigin + size * 0.5f;
+            return math.normalizesafe(center - worldPos);
+        }
+        return SDF_Gradient3D[SDF_GetIndex(worldPos)];
+    }
+
+    private float SampleSDF_Distance(float3 worldPos)
+    {
+        if (SDF_OutOfBounds(worldPos))
+        {
+            return 0f; // Выход за границы SDF расценивается как сплошная непреодолимая стена!
+        }
+        return SDF_Distance3D[SDF_GetIndex(worldPos)];
+    }
 
     public void Execute(int index, TransformAccess transform)
     {
@@ -107,32 +126,25 @@ public struct SwarmJob : IJobParallelForTransform
 
         if (agent.State == SwarmState.Dead) return;
 
-        // --- 1. FSM (Конечный автомат) ---
+        // --- 1. FSM ---
         float distToPlayerSq = math.distancesq(position, PlayerPosition);
         if (agent.State == SwarmState.Swarming)
         {
             if (distToPlayerSq < ChargeRadius * ChargeRadius)
-            {
                 agent.State = SwarmState.Charging;
-            }
         }
         else if (agent.State == SwarmState.Charging)
         {
             if (distToPlayerSq > (ChargeRadius * 1.5f) * (ChargeRadius * 1.5f))
-            {
                 agent.State = SwarmState.Swarming;
-            }
         }
 
-        // --- 2. Подсчёт локальной плотности и сил Boids (Spatial Hashing) ---
+        // --- 2. Boids (Spatial Hashing) ---
         float3 separation = float3.zero;
-        float3 alignment = float3.zero;
-        float3 cohesion = float3.zero;
-        float3 viscosity = float3.zero;
-        float3 densityGradient = float3.zero;
+        float3 alignment  = float3.zero;
+        float3 cohesion   = float3.zero;
         int neighborCount = 0;
-        int sepCount = 0;
-        float localDensity = 0f;
+        int sepCount      = 0;
 
         int3 cell = math.int3(math.floor(position / HashCellSize));
 
@@ -157,13 +169,6 @@ public struct SwarmJob : IJobParallelForTransform
                     {
                         float dist = math.sqrt(distSq);
 
-                        float q = dist / NeighborRadius;
-                        float kernel = math.max(0f, 1f - q);
-                        localDensity += kernel * kernel;
-
-                        if (dist > 0.001f)
-                            densityGradient += (position - otherPos) / dist * kernel;
-
                         if (dist < SeparationRadius && dist > 0.001f)
                         {
                             separation += (position - otherPos) / distSq;
@@ -175,16 +180,22 @@ public struct SwarmJob : IJobParallelForTransform
                         {
                             float penetration = (agentDiameter - dist) * 0.5f;
                             float3 pushDir = (position - otherPos) / dist;
-                            pushDir.y = 0;
-                            position += pushDir * penetration * 0.5f;
+                            // Оставляем pushDir в 3D для трехмерного расталкивания
+                            
+                            float3 nextSepPos = position + pushDir * penetration * 0.15f;
+                            float curSdf = SampleSDF_Distance(position);
+                            float nextSdf = SampleSDF_Distance(nextSepPos);
+                            if (nextSdf >= WallDistance || nextSdf > curSdf)
+                            {
+                                position = nextSepPos;
+                            }
                         }
 
                         if (agent.State == SwarmState.Swarming)
                         {
                             float3 otherVel = Agents[otherIndex].Velocity;
                             alignment += otherVel;
-                            cohesion += otherPos;
-                            viscosity += otherVel;
+                            cohesion  += otherPos;
                             neighborCount++;
                         }
                     }
@@ -197,108 +208,133 @@ public struct SwarmJob : IJobParallelForTransform
         {
             alignment /= neighborCount;
             cohesion = (cohesion / neighborCount) - position;
-            viscosity /= neighborCount;
         }
         if (sepCount > 0)
-        {
             separation /= sepCount;
-        }
 
-        // --- 3. Flow Field Navigation ---
-        float3 flowDir = float3.zero;
-
-        float3 localPos = position - FlowFieldOrigin;
-        int2 ffCell = new int2(
-            math.clamp((int)math.floor(localPos.x / FlowFieldCellSize), 0, GridSize.x - 1),
-            math.clamp((int)math.floor(localPos.z / FlowFieldCellSize), 0, GridSize.y - 1)
-        );
-        int ffIndex = ffCell.x + ffCell.y * GridSize.x;
-
-        if (ffIndex >= 0 && ffIndex < FlowField.Length)
+        // --- 3. Anchor Navigation ---
+        float3 toAnchor = AnchorPositions[agent.AnchorIndex] - position;
+        float anchorDist = math.length(toAnchor);
+        
+        // Эластичная сила: если агент отходит далеко от якоря, сила притяжения прогрессивно возрастает!
+        float elasticFactor = 1.0f;
+        if (anchorDist > 4.0f)
         {
-            flowDir = FlowField[ffIndex];
+            elasticFactor += (anchorDist - 4.0f) * 0.75f;
         }
+        
+        // Коэффициент следования: если якорь слишком далеко (>15м), рой плавно перестает за ним следовать и рассеивается
+        float followFactor = 1.0f - math.smoothstep(10.0f, 15.0f, anchorDist);
+        float anchorMag = math.min(anchorDist * 0.4f, AnchorWeight * elasticFactor) * followFactor;
 
-        // --- 4. Давление (Pressure) ---
-        float pressureError = localDensity - TargetDensity;
-        float3 pressureForce = float3.zero;
-
-        if (math.abs(pressureError) > 0.01f)
-        {
-            float3 pressureDir = sepCount > 0
-                ? math.normalizesafe(separation)
-                : math.normalizesafe(densityGradient);
-            if (math.lengthsq(pressureDir) > 0.001f)
-                pressureForce = pressureDir * pressureError;
-        }
-
-        // --- 5. Боковое растекание (Lateral Spread) ---
-        float sdfHere = SampleSDF_Distance(position);
-        float3 wallGradHere = SampleSDF_Gradient(position);
-
-        float3 lateralForce = float3.zero;
+        float3 localPAnchor = position - FlowFieldOrigin;
+        int2 fcAnchor = new int2(
+            math.clamp((int)math.floor(localPAnchor.x / FlowFieldCellSize), 0, GridSize.x - 1),
+            math.clamp((int)math.floor(localPAnchor.z / FlowFieldCellSize), 0, GridSize.y - 1));
+        
+        float3 flowDir = FlowField[fcAnchor.x + fcAnchor.y * GridSize.x];
+        float3 navigateDir = math.normalizesafe(toAnchor);
+        
+        bool inWallCell = SampleSDF_Distance(position) < 0f;
         if (math.lengthsq(flowDir) > 0.01f)
         {
-            float3 perpendicular = new float3(-flowDir.z, 0, flowDir.x);
-
-            float phase = (agent.RandomSeed % 1000) * 0.00628f;
-            float lateralTarget = math.sin(Time * 0.7f + phase);
-            agent.LateralOffset = math.lerp(agent.LateralOffset, lateralTarget, DeltaTime * 0.5f);
-
-            lateralForce = perpendicular * agent.LateralOffset;
-
-            if (pressureError > 0.5f)
-            {
-                lateralForce *= (1f + pressureError);
-            }
-
-            float corridorFactor = 1f - math.saturate(sdfHere / (ObstacleAvoidRadius * 2f));
-            lateralForce *= (1f + corridorFactor * 3f);
+            // Увеличиваем приоритет векторного поля (вес 2.5), чтобы агенты надежно огибали стены!
+            navigateDir = math.normalizesafe(navigateDir * 0.3f + flowDir * 2.5f);
         }
+        else if (inWallCell)
+        {
+            // Если мы глубоко в стене и векторного поля нет, принудительно рулим к выходу по запеченному градиенту SDF!
+            float3 escapeGrad = SampleSDF_Gradient(position);
+            // Разрешаем вертикальный уход от пола/потолка
+            if (math.lengthsq(escapeGrad) > 0.01f)
+            {
+                navigateDir = math.normalizesafe(escapeGrad);
+            }
+            else
+            {
+                navigateDir = math.normalizesafe(toAnchor);
+            }
+        }
+        float3 anchorForce = navigateDir * anchorMag;
 
-        // --- 6. Wander ---
+        // --- 4. Wander ---
         agent.RandomSeed = agent.RandomSeed * 1664525 + 1013904223;
         float randomWanderChange = ((float)(agent.RandomSeed & 0xFFFF) / 65535f) * 2f - 1f;
-
         agent.WanderAngle += randomWanderChange * 8f * DeltaTime;
-        float3 wanderDir = new float3(math.cos(agent.WanderAngle), 0, math.sin(agent.WanderAngle));
 
-        // --- 6b. Трёхосевое отталкивание от геометрии (3D SDF) ---
+        // --- 5. Отталкивание от геометрии (3D SDF) ---
+        float sdfHere = SampleSDF_Distance(position);
+        float3 wallGradHere = SampleSDF_Gradient(position);
+        
+        if (sdfHere < ObstacleAvoidRadius)
+        {
+            if (math.lengthsq(wallGradHere) > 0.01f)
+            {
+                wallGradHere = math.normalizesafe(wallGradHere);
+            }
+            else
+            {
+                // Безопасный дефолт, хотя запеченный градиент гарантирует валидное значение
+                wallGradHere = new float3(1, 0, 0);
+            }
+        }
+        
+        // Делаем силу уклонения нелинейной (кубической) и увеличиваем её вес на близких дистанциях (3x), чтобы она была жесткой!
+        float tObstacle = 1f - math.saturate(sdfHere / ObstacleAvoidRadius);
+        float forceCurve = tObstacle * tObstacle * tObstacle;
         float3 obstacleForce = sdfHere < ObstacleAvoidRadius
-            ? wallGradHere * (1f - sdfHere / ObstacleAvoidRadius)
+            ? wallGradHere * forceCurve * ObstacleAvoidWeight * 3.0f
             : float3.zero;
 
-        // --- 6c. Вертикальное блуждание ---
-        float verticalWander = math.sin(Time * 0.8f + agent.VerticalOffset * math.PI * 2f) * 0.3f;
+        // --- 6. Вертикальное блуждание — заполняет объём коридора ---
+        float verticalWander = math.sin(Time * 0.8f + agent.VerticalOffset * math.PI * 2f) * 1.5f;
         float3 verticalForce = new float3(0, verticalWander, 0);
-
-        // --- 6d. Глубинный слой по типу агента ---
+        
+        // --- 7. Глубинный слой по типу агента ---
+        float3 toPlayer = PlayerPosition - position;
+        float playerDist = math.length(toPlayer);
         float preferredDist = agent.Type switch {
-            AgentType.Kinesia     => ChargeRadius * 0.3f,
-            AgentType.Smallion    => ChargeRadius * 0.6f,
-            AgentType.Transfinite => ChargeRadius * 1.0f,
-            _                     => ChargeRadius * 0.6f
+            AgentType.Kinesia     => 2.0f,
+            AgentType.Smallion    => 5.0f,
+            AgentType.Transfinite => 9.0f,
+            _                     => 5.0f
         };
-        float3 depthDir = PlayerPosition - position;
-        float depthCurrentDist = math.length(depthDir);
-        float3 depthForce = math.normalizesafe(depthDir) * (depthCurrentDist - preferredDist) * 0.5f;
+        
+        float3 playerNavigateDir = math.normalizesafe(toPlayer);
+        if (math.lengthsq(flowDir) > 0.01f)
+        {
+            // Используем направление векторного поля для движения к игроку, чтобы огибать стены!
+            playerNavigateDir = flowDir;
+        }
+        else if (inWallCell)
+        {
+            // Если мы в стене и пути по FlowField нет — полностью отключаем силу притяжения к игроку, чтобы она не мешала выталкиванию!
+            playerNavigateDir = float3.zero;
+        }
+        // Также плавно гасим притяжение к игроку, если якорь улетел слишком далеко, чтобы рой рассеивался локально
+        float3 depthForce = playerNavigateDir * (playerDist - preferredDist) * 0.3f * followFactor;
 
-        // --- 6e. Отталкивание от игрока (рой обтекает, не давит) ---
+        // --- 8. Отталкивание от игрока (рой обтекает, не давит) ---
         float3 playerRepel = float3.zero;
-        float3 toPlayer = position - PlayerPosition;
-        toPlayer.y = 0;
-        float distToPlayerXZ = math.length(toPlayer);
+        float3 toPlayerXZ = position - PlayerPosition;
+        toPlayerXZ.y = 0;
+        float distToPlayerXZ = math.length(toPlayerXZ);
         float playerHardDist = PlayerRadius + AgentRadius;
         float playerSoftDist = playerHardDist + AgentRadius * 4f;
 
         if (distToPlayerXZ < playerSoftDist && distToPlayerXZ > 0.001f)
         {
-            float3 pushDir = toPlayer / distToPlayerXZ;
+            float3 pushDir = toPlayerXZ / distToPlayerXZ;
 
             if (distToPlayerXZ < playerHardDist)
             {
-                position += pushDir * (playerHardDist - distToPlayerXZ);
-
+                float3 nextRepelPos = position + pushDir * (playerHardDist - distToPlayerXZ);
+                float curSdf = SampleSDF_Distance(position);
+                float nextSdf = SampleSDF_Distance(nextRepelPos);
+                if (nextSdf >= WallDistance || nextSdf > curSdf)
+                {
+                    position = nextRepelPos;
+                }
                 float3 towardPlayer = -pushDir;
                 float velTowardPlayer = math.dot(agent.Velocity, towardPlayer);
                 if (velTowardPlayer > 0) agent.Velocity -= towardPlayer * velTowardPlayer;
@@ -315,168 +351,148 @@ public struct SwarmJob : IJobParallelForTransform
             playerRepel = repelForce + flowAroundForce;
         }
 
-        // --- 7. Вязкость (Viscosity) ---
-        float3 viscosityForce = float3.zero;
-        if (neighborCount > 0)
-        {
-            viscosityForce = viscosity - agent.Velocity;
-        }
-
-        // --- 8. Расчёт итогового вектора скорости ---
+        // --- 9. Итоговая скорость ---
         float3 targetVelocity = float3.zero;
 
         if (agent.State == SwarmState.Swarming)
         {
-            targetVelocity = separation * SeparationWeight +
-                             math.normalizesafe(alignment) * AlignmentWeight +
-                             math.normalizesafe(cohesion) * CohesionWeight +
-                             flowDir * FlowFieldWeight +
-                             wanderDir * WanderWeight +
-                             pressureForce * PressureWeight +
-                             lateralForce * LateralSpreadWeight +
-                             viscosityForce * ViscosityWeight +
-                             obstacleForce * ObstacleAvoidWeight +
-                             verticalForce;
+            targetVelocity = anchorForce
+                + separation  * SeparationWeight
+                + math.normalizesafe(alignment) * AlignmentWeight
+                + math.normalizesafe(cohesion) * CohesionWeight
+                + verticalForce * WanderWeight;
+
+            // Слайдинг рулевой силы вдоль стен, чтобы избежать «бодания» с геометрией
+            if (sdfHere < ObstacleAvoidRadius && math.lengthsq(wallGradHere) > 0.01f)
+            {
+                float dot = math.dot(targetVelocity, wallGradHere);
+                if (dot < 0f)
+                {
+                    targetVelocity -= wallGradHere * dot;
+                }
+            }
+
+            // Сила уклонения от стен влияет на направление до нормализации
+            targetVelocity += obstacleForce * ObstacleAvoidWeight;
 
             if (math.lengthsq(targetVelocity) > 0.001f)
-                targetVelocity = math.normalizesafe(targetVelocity) * MaxSpeed;
+            {
+                float speed = MaxSpeed;
+                if (anchorDist < 2.0f)
+                {
+                    speed = math.lerp(0.1f * MaxSpeed, MaxSpeed, anchorDist / 2.0f);
+                }
+                targetVelocity = math.normalizesafe(targetVelocity) * speed;
+            }
 
+            // Сила притяжения к игроку и расталкивания добавляются после нормализации для высокой реактивности
             targetVelocity += playerRepel;
             targetVelocity += depthForce;
         }
         else if (agent.State == SwarmState.Charging)
         {
-            targetVelocity = flowDir * (FlowFieldWeight * ChargeSpeedMult) +
-                             separation * SeparationWeight +
-                             wanderDir * (WanderWeight * 0.3f) +
-                             pressureForce * (PressureWeight * 0.5f) +
-                             lateralForce * (LateralSpreadWeight * 0.3f) +
-                             obstacleForce * ObstacleAvoidWeight +
-                             verticalForce;
+            targetVelocity = anchorForce * ChargeSpeedMult
+                + separation * SeparationWeight
+                + verticalForce;
+
+            // Слайдинг рулевой силы вдоль стен
+            if (sdfHere < ObstacleAvoidRadius && math.lengthsq(wallGradHere) > 0.01f)
+            {
+                float dot = math.dot(targetVelocity, wallGradHere);
+                if (dot < 0f)
+                {
+                    targetVelocity -= wallGradHere * dot;
+                }
+            }
+
+            targetVelocity += obstacleForce * ObstacleAvoidWeight;
 
             if (math.lengthsq(targetVelocity) > 0.001f)
-                targetVelocity = math.normalizesafe(targetVelocity) * (MaxSpeed * ChargeSpeedMult);
+            {
+                float speed = MaxSpeed * ChargeSpeedMult;
+                if (anchorDist < 2.0f)
+                {
+                    speed = math.lerp(0.1f * (MaxSpeed * ChargeSpeedMult), MaxSpeed * ChargeSpeedMult, anchorDist / 2.0f);
+                }
+                targetVelocity = math.normalizesafe(targetVelocity) * speed;
+            }
 
             targetVelocity += playerRepel;
             targetVelocity += depthForce;
         }
 
-        // Интерполяция скорости (инерция роя). Сглаживаем у стен, чтобы не дёргалось.
         float wallProximity = 1f - math.saturate(sdfHere / ObstacleAvoidRadius);
-        float lerpSpeed = math.lerp(5f, 2f, wallProximity);
+        // Сглаживаем реакцию до максимум 10f во избежание резкого дребезга скорости у препятствий
+        float lerpSpeed = math.lerp(5f, 10f, wallProximity);
         agent.Velocity = math.lerp(agent.Velocity, targetVelocity, DeltaTime * lerpSpeed);
 
-        // Применяем движение (Swept Collision — защита от пролёта сквозь стены на высокой скорости)
+        // --- CCD SUBSTEPPING (Непрерывный тест коллизий против туннелирования на больших скоростях) ---
         float3 moveVec = agent.Velocity * DeltaTime;
         float moveDist = math.length(moveVec);
-        if (moveDist > 0.001f)
+        // Используем половину ячейки SDF в качестве максимального шага
+        int substeps = math.max(1, (int)math.ceil(moveDist / (SDFCellSize * 0.5f))); 
+        float3 stepVec = moveVec / substeps;
+
+        for (int step = 0; step < substeps; step++)
         {
-            float3 moveDir = moveVec / moveDist;
-            int steps = math.max(2, (int)math.ceil(moveDist / (FlowFieldCellSize * 0.5f)));
-            for (int s = 1; s <= steps; s++)
+            float3 nextPos = position + stepVec;
+            bool nextRealWall = SampleSDF_Distance(nextPos) < WallDistance;
+
+            if (!nextRealWall)
             {
-                float3 testPos = position + moveDir * (moveDist * s / steps);
+                position = nextPos;
+            }
+            else
+            {
+                // Sliding: пробуем X и Z независимо
+                float3 posX = position + new float3(stepVec.x, stepVec.y, 0);
+                float3 posZ = position + new float3(0, stepVec.y, stepVec.z);
 
-                float3 localTest = testPos - FlowFieldOrigin;
-                int2 tc = new int2(
-                    math.clamp((int)math.floor(localTest.x / FlowFieldCellSize), 0, GridSize.x - 1),
-                    math.clamp((int)math.floor(localTest.z / FlowFieldCellSize), 0, GridSize.y - 1));
+                bool xWall = SampleSDF_Distance(posX) < WallDistance;
+                bool zWall = SampleSDF_Distance(posZ) < WallDistance;
 
-                if (CostField[tc.x + tc.y * GridSize.x] == 255)
+                if (!xWall)
                 {
-                    float3 testWallN = SampleSDF_Gradient(testPos);
-                    float dot = math.dot(agent.Velocity, testWallN);
-                    if (dot < 0) agent.Velocity -= testWallN * dot;
-                    moveVec = agent.Velocity * DeltaTime;
+                    position = posX;
+                    float3 vel = agent.Velocity; vel.z = 0; agent.Velocity = vel;
+                }
+                else if (!zWall)
+                {
+                    position = posZ;
+                    float3 vel = agent.Velocity; vel.x = 0; agent.Velocity = vel;
+                }
+                else
+                {
+                    // Полностью заблокированы — стоим, прерываем CCD цикл в этом кадре
+                    agent.Velocity = float3.zero;
                     break;
                 }
             }
         }
-        position += moveVec;
 
-        // --- 9. ЖЁСТКАЯ SDF-КОЛЛИЗИЯ И СТРОГОЕ ПРАВИЛО UNWALKABLE ЗОНЫ ---
+        // --- 10. Жёсткая SDF-коллизия ---
 
         // Шаг А: Страховочная коллизия после движения.
         float sdfDist = SampleSDF_Distance(position);
         float3 wallNormal = SampleSDF_Gradient(position);
+
         if (sdfDist < WallDistance)
         {
             float penetration = WallDistance - sdfDist;
 
-            if (math.lengthsq(wallNormal) < 0.01f)
+            if (math.lengthsq(wallNormal) > 0.01f)
             {
-                float3 localP = position - FlowFieldOrigin;
-                int2 fc = new int2(
-                    math.clamp((int)math.floor(localP.x / FlowFieldCellSize), 0, GridSize.x - 1),
-                    math.clamp((int)math.floor(localP.z / FlowFieldCellSize), 0, GridSize.y - 1));
-                float bestDistSq = float.MaxValue;
-                float3 bestEscape = new float3(1, 0, 0);
-
-                for (int r = 1; r <= 3; r++)
-                {
-                    for (int wx = -r; wx <= r; wx++)
-                    for (int wz = -r; wz <= r; wz++)
-                    {
-                        int2 wc = fc + new int2(wx, wz);
-                        if (wc.x < 0 || wc.x >= GridSize.x || wc.y < 0 || wc.y >= GridSize.y) continue;
-                        if (CostField[wc.x + wc.y * GridSize.x] == 255) continue;
-
-                        float3 emptyCenter = FlowFieldOrigin + new float3(
-                            wc.x * FlowFieldCellSize + FlowFieldCellSize * 0.5f, position.y,
-                            wc.y * FlowFieldCellSize + FlowFieldCellSize * 0.5f);
-                        float dSq = math.distancesq(position, emptyCenter);
-                        if (dSq < bestDistSq)
-                        {
-                            bestDistSq = dSq;
-                            bestEscape = math.normalizesafe(new float3(emptyCenter.x - position.x, 0, emptyCenter.z - position.z));
-                        }
-                    }
-                    if (bestDistSq < float.MaxValue) break;
-                }
-                wallNormal = bestEscape;
+                wallNormal = math.normalizesafe(wallNormal);
+            }
+            else
+            {
+                // Безопасный дефолт, если градиент по какой-то причине нулевой
+                wallNormal = new float3(1, 0, 0);
             }
 
             position += wallNormal * penetration;
             float wallDot = math.dot(agent.Velocity, wallNormal);
             if (wallDot < 0) agent.Velocity -= wallNormal * wallDot;
-        }
-
-        // Шаг Б: ЖЁСТКОЕ ПРАВИЛО. Если агент внутри ячейки-стены — перемещаем в ближайшую свободную зону.
-        float3 localPFinal = position - FlowFieldOrigin;
-        int2 fcFinal = new int2(
-            math.clamp((int)math.floor(localPFinal.x / FlowFieldCellSize), 0, GridSize.x - 1),
-            math.clamp((int)math.floor(localPFinal.z / FlowFieldCellSize), 0, GridSize.y - 1));
-
-        if (CostField[fcFinal.x + fcFinal.y * GridSize.x] == 255)
-        {
-            float bestDistSq = float.MaxValue;
-            float3 safePos = position;
-
-            for (int r = 1; r <= 4; r++)
-            {
-                for (int wx = -r; wx <= r; wx++)
-                for (int wz = -r; wz <= r; wz++)
-                {
-                    int2 wc = fcFinal + new int2(wx, wz);
-                    if (wc.x < 0 || wc.x >= GridSize.x || wc.y < 0 || wc.y >= GridSize.y) continue;
-                    if (CostField[wc.x + wc.y * GridSize.x] == 255) continue;
-
-                    float3 emptyCenter = FlowFieldOrigin + new float3(
-                        wc.x * FlowFieldCellSize + FlowFieldCellSize * 0.5f, position.y,
-                        wc.y * FlowFieldCellSize + FlowFieldCellSize * 0.5f);
-
-                    float dSq = math.distancesq(position, emptyCenter);
-                    if (dSq < bestDistSq)
-                    {
-                        bestDistSq = dSq;
-                        safePos = emptyCenter;
-                    }
-                }
-                if (bestDistSq < float.MaxValue) break;
-            }
-
-            position = safePos;
-            agent.Velocity = float3.zero;
         }
 
         // Ограничиваем агентов рамками карты (XZ — flow field, Y — SDF grid)
@@ -486,7 +502,7 @@ public struct SwarmJob : IJobParallelForTransform
         position.z = math.clamp(position.z, minMap.z + WallDistance, maxMap.z - WallDistance);
         position.y = math.clamp(position.y, SDFOrigin.y + WallDistance, SDFOrigin.y + SDFGridSize.y * SDFCellSize - WallDistance);
 
-        // --- ФИНАЛЬНАЯ ЖЁСТКАЯ ЗОНА: агент НИКОГДА не касается физического коллайдера игрока ---
+        // Финальная жёсткая зона: агент не касается коллайдера игрока
         float3 toPlayerFinal = position - PlayerPosition;
         toPlayerFinal.y = 0;
         float distToPlayerFinal = math.length(toPlayerFinal);
@@ -494,14 +510,20 @@ public struct SwarmJob : IJobParallelForTransform
         if (distToPlayerFinal < playerExclusionDist && distToPlayerFinal > 0.001f)
         {
             float3 pushAwayDir = toPlayerFinal / distToPlayerFinal;
-            position = new float3(PlayerPosition.x, position.y, PlayerPosition.z) + pushAwayDir * playerExclusionDist;
+            float3 nextExclusionPos = new float3(PlayerPosition.x, position.y, PlayerPosition.z) + pushAwayDir * playerExclusionDist;
+            
+            float curSdf = SampleSDF_Distance(position);
+            float nextSdf = SampleSDF_Distance(nextExclusionPos);
+            if (nextSdf >= WallDistance || nextSdf > curSdf)
+            {
+                position = nextExclusionPos;
+            }
 
             float velTowardPlayer = math.dot(agent.Velocity, -pushAwayDir);
             if (velTowardPlayer > 0)
                 agent.Velocity -= -pushAwayDir * velTowardPlayer;
         }
 
-        // Поворот агента по вектору движения
         if (math.lengthsq(agent.Velocity) > 0.01f)
         {
             quaternion targetRot = quaternion.LookRotationSafe(math.normalizesafe(agent.Velocity), math.up());

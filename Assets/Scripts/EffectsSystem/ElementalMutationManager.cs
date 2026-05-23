@@ -16,6 +16,7 @@ namespace Sclass.EffectsSystem
         private const float MaxStat              = 100f;
         private const float NormBase             = 10f;
         private const float KinesiaSeizureThreshold = 5f;
+        private const float BurnCoefficient      = 0.1f;
 
         // ── Dependencies ────────────────────────────────────────────────────────
         [Header("Dependencies")]
@@ -75,6 +76,7 @@ namespace Sclass.EffectsSystem
 
             ApplyKinesiaEffects();
             ApplySmallionEffects();
+            ApplyBurn(Time.deltaTime);
             CheckForDeath();
             BroadcastUIData();
         }
@@ -145,6 +147,29 @@ namespace Sclass.EffectsSystem
             }
         }
 
+        // Burn mechanic: scales above 50 reduce other two scales proportionally
+        private void ApplyBurn(float dt)
+        {
+            // Compute burn for each scale if above neutral (50)
+            if (_kinesia > 50f)
+            {
+                float burn = (_kinesia - 50f) * BurnCoefficient * dt;
+                _smallion = Mathf.Max(MinStat, _smallion - burn);
+                _transfinite = Mathf.Max(MinStat, _transfinite - burn);
+            }
+            if (_smallion > 50f)
+            {
+                float burn = (_smallion - 50f) * BurnCoefficient * dt;
+                _kinesia = Mathf.Max(MinStat, _kinesia - burn);
+                _transfinite = Mathf.Max(MinStat, _transfinite - burn);
+            }
+            if (_transfinite > 50f)
+            {
+                float burn = (_transfinite - 50f) * BurnCoefficient * dt;
+                _kinesia = Mathf.Max(MinStat, _kinesia - burn);
+                _smallion = Mathf.Max(MinStat, _smallion - burn);
+            }
+        }
         // ── UI Broadcast ────────────────────────────────────────────────────────
         private void BroadcastUIData()
         {

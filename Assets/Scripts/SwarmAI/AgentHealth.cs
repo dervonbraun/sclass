@@ -80,8 +80,8 @@ public class AgentHealth : MonoBehaviour, IDamageable
         if (DeathEffectPrefab != null)
             Instantiate(DeathEffectPrefab, deathPosition, UnityEngine.Quaternion.identity);
 
-        // Сообщаем SwarmManager: пометить агента как Dead в NativeArray
-        _swarmManager?.KillAgent(AgentIndex);
+        // Сообщаем SwarmManager: пометить агента как Dead и заспавнить облако
+        _swarmManager?.KillAgent(AgentIndex, deathPosition);
         OnAgentKilled?.Invoke();
     }
 
