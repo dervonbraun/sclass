@@ -40,9 +40,17 @@ public class WeaponHolder : MonoBehaviour
 
     private WeaponBase _activeWeapon;
     private int        _activeSlot = -1;     // -1 = ничего не экипировано
+    private bool       _firingEnabled = true;
 
-    public WeaponBase ActiveWeapon  => _activeWeapon;
+    public WeaponBase ActiveWeapon    => _activeWeapon;
     public int        ActiveSlotIndex => _activeSlot;
+
+    /// <summary>Блокирует/разблокирует стрельбу (используется терминалом).</summary>
+    public void SetFiringEnabled(bool enabled)
+    {
+        _firingEnabled = enabled;
+        if (!enabled) _activeWeapon?.ReleaseTriger();
+    }
 
     // ── Жизненный цикл ─────────────────────────────────────────
 
@@ -150,7 +158,7 @@ public class WeaponHolder : MonoBehaviour
 
     // ── Input callbacks ────────────────────────────────────────
 
-    private void OnFireStarted(InputAction.CallbackContext ctx)   => _activeWeapon?.PressTriger();
+    private void OnFireStarted(InputAction.CallbackContext ctx)   { if (_firingEnabled) _activeWeapon?.PressTriger(); }
     private void OnFireCanceled(InputAction.CallbackContext ctx)  => _activeWeapon?.ReleaseTriger();
     private void OnReloadStarted(InputAction.CallbackContext ctx) => _activeWeapon?.RequestReload();
     private void OnAimStarted(InputAction.CallbackContext ctx)    => _activeWeapon?.SetAiming(true);

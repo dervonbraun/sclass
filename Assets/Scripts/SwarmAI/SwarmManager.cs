@@ -33,6 +33,12 @@ public class SwarmManager : MonoBehaviour
     public float SpawnRadius = 20f;
     public LayerMask GroundMask;
 
+    [Header("Коллизии")]
+    [Tooltip("Слой агентов роя. Коллизия между ним и слоем игрока будет отключена.")]
+    public string AgentLayerName = "SwarmAgent";
+    [Tooltip("Слой игрока.")]
+    public string PlayerLayerName = "Player";
+
     [Header("Boids Weights")]
     public float SeparationWeight = 1.5f;
     public float AlignmentWeight = 1.0f;
@@ -92,6 +98,13 @@ public class SwarmManager : MonoBehaviour
 
     private void Start()
     {
+        int agentLayer  = LayerMask.NameToLayer(AgentLayerName);
+        int playerLayer = LayerMask.NameToLayer(PlayerLayerName);
+        if (agentLayer >= 0 && playerLayer >= 0)
+            Physics.IgnoreLayerCollision(agentLayer, playerLayer, true);
+        else
+            Debug.LogWarning("[SwarmManager] Не найден слой агентов или игрока — коллизия не отключена. Проверь AgentLayerName / PlayerLayerName.");
+
         _agents = new NativeArray<AgentData>(SwarmSize, Allocator.Persistent);
         _agentPositions = new NativeArray<float3>(SwarmSize, Allocator.Persistent);
         _transformAccessArray = new TransformAccessArray(SwarmSize);

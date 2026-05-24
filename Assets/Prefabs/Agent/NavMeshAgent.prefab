@@ -138,6 +138,7 @@ GameObject:
   m_Component:
   - component: {fileID: 6891165060998490566}
   - component: {fileID: 894702708880500627}
+  - component: {fileID: -3931477971208788161}
   m_Layer: 7
   m_Name: NavMeshAgent
   m_TagString: Untagged
@@ -183,3 +184,16 @@ NavMeshAgent:
   m_BaseOffset: 0
   m_WalkableMask: 4294967295
   m_ObstacleAvoidanceType: 4
+--- !u!114 &-3931477971208788161
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4820411320186206332}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 26b2516f3a84ca94eaa771fa90681572, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SwarmAnchorHealth
+  DamagePerAgent: 5

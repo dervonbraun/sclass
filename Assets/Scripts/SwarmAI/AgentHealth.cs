@@ -12,9 +12,15 @@ public class AgentHealth : MonoBehaviour, IDamageable
     /// <summary>Fires on every agent death. SingularityController listens to this for kill restoration.</summary>
     public static event System.Action OnAgentKilled;
 
+    /// <summary>Fires on agent death with coin amount. PlayerWallet subscribes to this.</summary>
+    public static event System.Action<int> OnAgentKilledForCoins;
+
     [Header("Настройки")]
     [Tooltip("Максимальное HP агента.")]
     public float MaxHealth = 30f;
+
+    [Tooltip("Количество монет, которые дропаются при смерти агента.")]
+    public int CoinDrop = 1;
 
     [Tooltip("Эффект смерти (опционально).")]
     public GameObject DeathEffectPrefab;
@@ -83,6 +89,8 @@ public class AgentHealth : MonoBehaviour, IDamageable
         // Сообщаем SwarmManager: пометить агента как Dead и заспавнить облако
         _swarmManager?.KillAgent(AgentIndex, deathPosition);
         OnAgentKilled?.Invoke();
+        if (CoinDrop > 0)
+            OnAgentKilledForCoins?.Invoke(CoinDrop);
     }
 
     private static void SetLayerRecursive(GameObject go, int layer)

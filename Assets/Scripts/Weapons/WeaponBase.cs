@@ -104,6 +104,14 @@ public abstract class WeaponBase : MonoBehaviour
         isAiming = aiming;
     }
 
+    /// <summary>Пополняет магазин на указанное количество (не превышает magazineSize).</summary>
+    public void RestoreAmmo(int amount)
+    {
+        if (settings == null) return;
+        CurrentAmmo = Mathf.Min(CurrentAmmo + amount, settings.magazineSize);
+        OnAmmoChanged?.Invoke(CurrentAmmo, settings.magazineSize);
+    }
+
     // ── Внутренняя логика ──────────────────────────────────────
 
     protected virtual void Update()
